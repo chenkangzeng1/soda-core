@@ -56,7 +56,7 @@ if [ -z "$VERSION" ] || [[ "$VERSION" == *"\${"* ]]; then
   exit 1
 fi
 
-MODULE_PATH="${WORK_DIR}/com/trieai/scoda/${ARTIFACT_ID}/${VERSION}"
+MODULE_PATH="${WORK_DIR}/com/hibuka/soda/${ARTIFACT_ID}/${VERSION}"
 ZIP_FILE="${ARTIFACT_ID}-${VERSION}-upload.zip"
 ZIP_FULL_PATH="${PROJECT_ROOT}/${ZIP_FILE}"
 
