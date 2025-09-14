@@ -1,0 +1,228 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.hibuka.soda</groupId>
+    <artifactId>soda-core</artifactId>
+    <version>${project.version}</version>
+    <packaging>jar</packaging>
+    <name>soda-core</name>
+    <description>
+A Spring Boot starter that provides a complete foundation for implementing Domain-Driven Design (DDD) in Java applications. It includes abstractions and best practices for CQRS (Command Query Responsibility Segregation), event-driven architecture, unified exception handling, parameter validation, and configurable asynchronous processing. Designed to help developers build high-cohesion, extensible, and maintainable microservice systems with minimal boilerplate.
+（中文）一个用于Java应用的Spring Boot DDD（领域驱动设计）快速启动器，内置CQRS（命令查询职责分离）、事件驱动架构、统一异常处理、参数校验和可配置异步处理等最佳实践抽象，帮助开发者高效构建高内聚、易扩展、易维护的微服务系统。
+</description>
+
+    <properties>
+        <!-- 通用属性 -->
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.compiler.source>${java.version}</maven.compiler.source>
+        <maven.compiler.target>${java.version}</maven.compiler.target>
+        <fastjson-version>1.2.83</fastjson-version>
+        <lombok-version>1.18.36</lombok-version>
+    </properties>
+
+    <!-- Maven Profiles for different Spring Boot versions -->
+    <profiles>
+        <!-- Spring Boot 2.3 Profile -->
+        <profile>
+            <id>springboot-2.3</id>
+            <properties>
+                <java.version>1.8</java.version>
+                <spring-boot.version>2.3.12.RELEASE</spring-boot.version>
+                <project.version>1.0.0</project.version>
+                <knife4j.version>3.0.2</knife4j.version>
+                <knife4j.artifact>knife4j-spring-boot-starter</knife4j.artifact>
+                <maven.compiler.version>3.8.1</maven.compiler.version>
+                <maven.surefire.version>2.22.2</maven.surefire.version>
+                <maven.source.version>3.2.1</maven.source.version>
+                <maven.javadoc.version>3.2.0</maven.javadoc.version>
+            </properties>
+            <dependencies>
+                <!-- Spring Boot 2.3 requires explicit spring-tx dependency -->
+                <dependency>
+                    <groupId>org.springframework</groupId>
+                    <artifactId>spring-tx</artifactId>
+                    <version>5.2.12.RELEASE</version>
+                </dependency>
+            </dependencies>
+        </profile>
+
+        <!-- Spring Boot 2.7 Profile -->
+        <profile>
+            <id>springboot-2.7</id>
+            <properties>
+                <java.version>1.8</java.version>
+                <spring-boot.version>2.7.18</spring-boot.version>
+                <project.version>1.1.0</project.version>
+                <knife4j.version>4.3.0</knife4j.version>
+                <knife4j.artifact>knife4j-openapi3-spring-boot-starter</knife4j.artifact>
+                <maven.compiler.version>3.8.1</maven.compiler.version>
+                <maven.surefire.version>2.22.2</maven.surefire.version>
+                <maven.source.version>3.2.1</maven.source.version>
+                <maven.javadoc.version>3.2.0</maven.javadoc.version>
+            </properties>
+            <dependencies>
+                <!-- Spring Boot 2.x requires explicit spring-tx dependency -->
+                <dependency>
+                    <groupId>org.springframework</groupId>
+                    <artifactId>spring-tx</artifactId>
+                    <version>5.3.30</version>
+                </dependency>
+            </dependencies>
+        </profile>
+
+        <!-- Spring Boot 3.2 Profile -->
+        <profile>
+            <id>springboot-3.2</id>
+            <properties>
+                <java.version>17</java.version>
+                <spring-boot.version>3.2.12</spring-boot.version>
+                <project.version>2.0.0</project.version>
+                <knife4j.version>4.3.0</knife4j.version>
+                <knife4j.artifact>knife4j-openapi3-spring-boot-starter</knife4j.artifact>
+                <maven.compiler.version>3.11.0</maven.compiler.version>
+                <maven.surefire.version>3.1.2</maven.surefire.version>
+                <maven.source.version>3.3.0</maven.source.version>
+                <maven.javadoc.version>3.6.3</maven.javadoc.version>
+            </properties>
+        </profile>
+    </profiles>
+    
+    <dependencyManagement>
+        <dependencies>
+            <!-- Spring Boot BOM for version management -->
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-dependencies</artifactId>
+                <version>${spring-boot.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+    
+    <dependencies>
+        <!-- Common dependencies for all versions -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.alibaba</groupId>
+            <artifactId>fastjson</artifactId>
+            <version>${fastjson-version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>${lombok-version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.github.xiaoymin</groupId>
+            <artifactId>${knife4j.artifact}</artifactId>
+            <version>${knife4j.version}</version>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Add other dependencies as needed -->
+    </dependencies>
+    
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>${maven.compiler.version}</version>
+                <configuration>
+                    <source>${java.version}</source>
+                    <target>${java.version}</target>
+                    <encoding>${project.build.sourceEncoding}</encoding>
+                    <parameters>true</parameters>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${maven.surefire.version}</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+                <version>${maven.source.version}</version>
+                <executions>
+                    <execution>
+                        <id>attach-sources</id>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>${maven.javadoc.version}</version>
+                <executions>
+                    <execution>
+                        <id>attach-javadocs</id>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <encoding>${project.build.sourceEncoding}</encoding>
+                    <charset>${project.build.sourceEncoding}</charset>
+                    <docencoding>${project.build.sourceEncoding}</docencoding>
+                    <failOnError>false</failOnError>
+                    <quiet>true</quiet>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+    
+    <distributionManagement>
+        <snapshotRepository>
+            <id>ossrh</id>
+            <url>https://s01.oss.sonatype.org/content/repositories/snapshots</url>
+        </snapshotRepository>
+        <repository>
+            <id>ossrh</id>
+            <url>https://s01.oss.sonatype.org/content/repositories/releases</url>
+        </repository>
+    </distributionManagement>
+    
+    <licenses>
+        <license>
+            <name>MIT License</name>
+            <url>https://opensource.org/licenses/MIT</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+    
+    <developers>
+        <developer>
+            <name>Scoda Team</name>
+            <email>chenkangzeng@163.com</email>
+            <organization>Scoda</organization>
+            <organizationUrl>https://github.com/chenkangzeng1</organizationUrl>
+        </developer>
+    </developers>
+    
+    <scm>
+        <connection>scm:git:https://github.com/chenkangzeng1/soda-core.git</connection>
+        <developerConnection>scm:git:git@github.com:chenkangzeng1/soda-core.git</developerConnection>
+        <url>https://github.com/chenkangzeng1/soda-core</url>
+    </scm>
+
+    <url>https://github.com/chenkangzeng1/soda-core</url>
+</project>
