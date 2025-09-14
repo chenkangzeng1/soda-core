@@ -46,7 +46,7 @@ implementation 'com.hibuka.soda:soda-core:2.0.0'
 ## Project Structure
 
 ```
-src/main/java/com/scoda/ddd
+src/main/java/com/hibuka/soda/ddd
 ├── component/    # Core beans, auto-configuration, CQRS facade, buses, aspects
 ├── model/
 │   ├── base/     # Base capabilities: error, io, constants, validation
@@ -66,7 +66,7 @@ Add the dependency to your `pom.xml` as shown in the Installation section above.
 In your `application.yaml`:
 
 ```yaml
-scoda:
+soda:
   ddd:
     cqrs:
       async:
@@ -137,14 +137,14 @@ public class GetUserQueryHandler implements QueryHandler<GetUserQuery, User> {
 
 | Property | Default | Description |
 |----------|---------|-------------|
-| `scoda.ddd.cqrs.async.core-pool-size` | 8 | Core thread pool size |
-| `scoda.ddd.cqrs.async.max-pool-size` | 16 | Maximum thread pool size |
-| `scoda.ddd.cqrs.async.queue-capacity` | 100 | Queue capacity |
-| `scoda.ddd.cqrs.async.thread-name-prefix` | "cqrs-async-" | Thread name prefix |
+| `soda.ddd.cqrs.async.core-pool-size` | 8 | Core thread pool size |
+| `soda.ddd.cqrs.async.max-pool-size` | 16 | Maximum thread pool size |
+| `soda.ddd.cqrs.async.queue-capacity` | 100 | Queue capacity |
+| `soda.ddd.cqrs.async.thread-name-prefix` | "cqrs-async-" | Thread name prefix |
 
 ## Extension & Customization
 
-- **Thread pool parameters**: Override via `scoda.ddd.cqrs.async.*` configuration.
+- **Thread pool parameters**: Override via `soda.ddd.cqrs.async.*` configuration.
 - **Custom thread pool**: Define your own `@Bean("cqrsAsyncExecutor")` to override the default.
 - **Custom BusFacade**: Define your own `@Bean` to override the starter's BusFacade.
 - **Command/Query/Event Handlers**: Implement the corresponding interfaces; they will be auto-registered.

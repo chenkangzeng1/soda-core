@@ -46,7 +46,7 @@ implementation 'com.hibuka.soda:soda-core:2.0.0'
 ## 项目结构
 
 ```
-src/main/java/com/scoda/ddd
+src/main/java/com/hibuka/soda/ddd
 ├── component/    # 核心Bean、自动配置、CQRS门面、总线、切面
 ├── model/
 │   ├── base/     # 基础能力：错误处理、IO、常量、验证
@@ -66,7 +66,7 @@ src/main/java/com/scoda/ddd
 在您的 `application.yaml` 中：
 
 ```yaml
-scoda:
+soda:
   ddd:
     cqrs:
       async:
@@ -137,14 +137,14 @@ public class GetUserQueryHandler implements QueryHandler<GetUserQuery, User> {
 
 | 属性 | 默认值 | 描述 |
 |------|--------|------|
-| `scoda.ddd.cqrs.async.core-pool-size` | 8 | 核心线程池大小 |
-| `scoda.ddd.cqrs.async.max-pool-size` | 16 | 最大线程池大小 |
-| `scoda.ddd.cqrs.async.queue-capacity` | 100 | 队列容量 |
-| `scoda.ddd.cqrs.async.thread-name-prefix` | "cqrs-async-" | 线程名称前缀 |
+| `soda.ddd.cqrs.async.core-pool-size` | 8 | 核心线程池大小 |
+| `soda.ddd.cqrs.async.max-pool-size` | 16 | 最大线程池大小 |
+| `soda.ddd.cqrs.async.queue-capacity` | 100 | 队列容量 |
+| `soda.ddd.cqrs.async.thread-name-prefix` | "cqrs-async-" | 线程名称前缀 |
 
 ## 扩展和自定义
 
-- **线程池参数**: 通过 `scoda.ddd.cqrs.async.*` 配置覆盖
+- **线程池参数**: 通过 `soda.ddd.cqrs.async.*` 配置覆盖
 - **自定义线程池**: 定义您自己的 `@Bean("cqrsAsyncExecutor")` 来覆盖默认配置
 - **自定义BusFacade**: 定义您自己的 `@Bean` 来覆盖启动器的BusFacade
 - **命令/查询/事件处理器**: 实现相应的接口；它们将被自动注册
