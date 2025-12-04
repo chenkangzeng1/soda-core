@@ -2,7 +2,6 @@ package com.hibuka.soda.core;
 
 import com.hibuka.soda.cqrs.BaseQuery;
 import com.hibuka.soda.cqrs.Command;
-import com.hibuka.soda.domain.AbstractAggregateRoot;
 import com.hibuka.soda.cqrs.handle.CommandBus;
 import com.hibuka.soda.cqrs.handle.QueryBus;
 import com.hibuka.soda.base.error.BaseException;
@@ -37,7 +36,7 @@ public class BusFacade {
      * @return the result of command execution
      * @throws BaseException if command execution fails
      */
-    public <C extends Command<R>, R extends AbstractAggregateRoot> R sendCommand(C command) throws BaseException {
+    public <C extends Command<R>, R> R sendCommand(C command) throws BaseException {
         if (command == null) {
             throw new NullPointerException("command must not be null");
         }
@@ -67,7 +66,7 @@ public class BusFacade {
      * @return the result of command execution
      * @throws BaseException if command execution fails
      */
-    public <C extends Command<R>, R extends AbstractAggregateRoot> R sendMqCommand(C command) throws BaseException {
+    public <C extends Command<R>, R> R sendMqCommand(C command) throws BaseException {
         throw new UnsupportedOperationException("sendMqCommand feature is not yet implemented, do not call!");
     }
 
@@ -78,7 +77,7 @@ public class BusFacade {
      * @param <R> the result type
      * @return a CompletableFuture containing the result of command execution
      */
-    public <C extends Command<R>, R extends AbstractAggregateRoot> CompletableFuture<R> sendAsyncCommand(C command) {
+    public <C extends Command<R>, R> CompletableFuture<R> sendAsyncCommand(C command) {
         if (command == null) {
             throw new NullPointerException("command must not be null");
         }
@@ -114,7 +113,7 @@ public class BusFacade {
      * @return the result of command execution
      * @throws BaseException if command execution fails
      */
-    public <C extends Command<R>, R extends AbstractAggregateRoot> R sendTransactCommand(C command) throws BaseException {
+    public <C extends Command<R>, R> R sendTransactCommand(C command) throws BaseException {
         if (command == null) {
             throw new NullPointerException("command must not be null");
         }

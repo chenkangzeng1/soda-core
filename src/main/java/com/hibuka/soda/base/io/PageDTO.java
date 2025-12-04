@@ -11,7 +11,7 @@ import java.util.List;
  * @since 2021/12/2
  **/
 @Data
-public class PageVO<T> {
+public class PageDTO<T> {
     /** Total count of records */
     private Long total;
     

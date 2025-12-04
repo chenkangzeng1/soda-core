@@ -5,12 +5,17 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>com.hibuka.soda</groupId>
     <artifactId>soda-core</artifactId>
-    <version>2.0.0</version>
+    <version>2.1.0</version>
     <packaging>jar</packaging>
     <name>soda-core</name>
     <description>
-        A Spring Boot starter that provides a complete foundation for implementing Domain-Driven Design (DDD) in Java applications. It includes abstractions and best practices for CQRS (Command Query Responsibility Segregation), event-driven architecture, unified exception handling, parameter validation, and configurable asynchronous processing. Designed to help developers build high-cohesion, extensible, and maintainable microservice systems with minimal boilerplate.
-        （中文）一个用于Java应用的Spring Boot DDD（领域驱动设计）快速启动器，内置CQRS（命令查询职责分离）、事件驱动架构、统一异常处理、参数校验和可配置异步处理等最佳实践抽象，帮助开发者高效构建高内聚、易扩展、易维护的微服务系统。
+        A Spring Boot starter that provides a complete foundation for implementing Domain-Driven Design (DDD) in Java
+        applications. It includes abstractions and best practices for CQRS (Command Query Responsibility Segregation),
+        event-driven architecture, unified exception handling, parameter validation, and configurable asynchronous
+        processing. Designed to help developers build high-cohesion, extensible, and maintainable microservice systems
+        with minimal boilerplate.
+        （中文）一个用于Java应用的Spring Boot
+        DDD（领域驱动设计）快速启动器，内置CQRS（命令查询职责分离）、事件驱动架构、统一异常处理、参数校验和可配置异步处理等最佳实践抽象，帮助开发者高效构建高内聚、易扩展、易维护的微服务系统。
     </description>
 
     <properties>
@@ -31,6 +36,11 @@
                 <version>${spring-boot.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.springframework</groupId>
+                <artifactId>spring-tx</artifactId>
+                <version>6.1.6</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
@@ -65,6 +75,10 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-tx</artifactId>
         </dependency>
     </dependencies>
 

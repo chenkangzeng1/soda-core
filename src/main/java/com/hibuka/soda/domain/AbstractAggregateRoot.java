@@ -18,7 +18,7 @@ public abstract class AbstractAggregateRoot extends AbstractDomainEvent implemen
      * Register domain event
      * @param event the domain event to register
      */
-    protected void registerEvent(AbstractDomainEvent event) {
+    protected void addPendingEvent(AbstractDomainEvent event) {
         if (event != null) {
             domainEvents.add(event);
         }

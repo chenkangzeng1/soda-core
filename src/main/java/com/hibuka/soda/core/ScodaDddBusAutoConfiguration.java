@@ -14,6 +14,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Primary;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import com.hibuka.soda.core.context.CommandContext;
+import org.springframework.beans.factory.ObjectProvider;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadPoolExecutor;
 
@@ -85,6 +87,16 @@ public class ScodaDddBusAutoConfiguration {
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
         executor.initialize();
         return executor;
+    }
+
+    @Bean
+    public CommandContext commandContext() {
+        return new CommandContext();
+    }
+
+    @Bean
+    public RepositoryEventAspect repositoryEventAspect(EventBus eventBus, ObjectProvider<CommandContext> commandContextProvider) {
+        return new RepositoryEventAspect(eventBus, commandContextProvider);
     }
 
     /**

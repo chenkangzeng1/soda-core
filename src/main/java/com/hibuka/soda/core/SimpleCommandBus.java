@@ -5,7 +5,6 @@ import com.hibuka.soda.base.error.BaseException;
 import com.hibuka.soda.cqrs.Command;
 import com.hibuka.soda.cqrs.handle.CommandBus;
 import com.hibuka.soda.cqrs.handle.CommandHandler;
-import com.hibuka.soda.domain.AbstractAggregateRoot;
 import org.springframework.core.GenericTypeResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,7 +45,7 @@ public class SimpleCommandBus implements CommandBus {
 
     @Override
     @SuppressWarnings("unchecked")
-    public <R extends AbstractAggregateRoot> R send(Command<R> command) throws BaseException {
+    public <R> R send(Command<R> command) throws BaseException {
         if (command == null) {
             throw new NullPointerException("command must not be null");
         }

@@ -1,6 +1,5 @@
 package com.hibuka.soda.cqrs;
 
-import com.hibuka.soda.domain.AbstractAggregateRoot;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
@@ -11,7 +10,7 @@ import lombok.Data;
  * @since 2024/10/24
  */
 @Data
-public abstract class BaseCommand<T extends AbstractAggregateRoot> implements Command<T> {
+public abstract class BaseCommand<R> implements Command<R> {
     private static final long serialVersionUID = -5532460938533182975L;
 
     /**
