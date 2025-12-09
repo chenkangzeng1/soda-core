@@ -11,11 +11,13 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Primary;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import com.hibuka.soda.core.context.CommandContext;
 import org.springframework.beans.factory.ObjectProvider;
+
 import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadPoolExecutor;
 
@@ -28,7 +30,7 @@ import java.util.List;
  * @since 2025/7/3
  **/
 @Configuration
-@EnableConfigurationProperties(AsyncConfig.class)
+@EnableConfigurationProperties({AsyncConfig.class, EventProperties.class})
 public class ScodaDddBusAutoConfiguration {
     /**
      * Creates a CQRS around handler.
@@ -46,8 +48,23 @@ public class ScodaDddBusAutoConfiguration {
      * @return the simple event bus
      */
     @Bean
+    @ConditionalOnProperty(name = "soda.event.bus-type", havingValue = "simple")
     public EventBus simpleEventBus(List<EventHandler<? extends DomainEvent>> eventHandlers) {
         return new SimpleEventBus(eventHandlers);
+    }
+
+    /**
+     * Creates a Spring event bus.
+     * @param applicationEventPublisher Spring's application event publisher
+     * @param eventHandlers the event handlers
+     * @return the Spring event bus
+     */
+    @Bean
+    @ConditionalOnProperty(name = "soda.event.bus-type", havingValue = "spring", matchIfMissing = true)
+    @Primary
+    public EventBus springEventBus(org.springframework.context.ApplicationEventPublisher applicationEventPublisher,
+                                 List<EventHandler<? extends DomainEvent>> eventHandlers) {
+        return new SpringEventBus(applicationEventPublisher, eventHandlers);
     }
 
     /**

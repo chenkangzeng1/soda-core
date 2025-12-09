@@ -230,6 +230,7 @@ docker-compose.override.yml
 *.exe
 *.out
 *.app
+.trae/
 
 # Package files
 *.deb
