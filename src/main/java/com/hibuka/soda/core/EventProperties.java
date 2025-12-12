@@ -204,13 +204,83 @@ public class EventProperties {
              * Name of the dead letter stream.
              */
             private String deadLetterStream = "soda-events-dead-letter";
+            
+            /**
+             * Idempotency configuration for event processing.
+             */
+            private IdempotencyProperties idempotency = new IdempotencyProperties();
 
             public boolean isEnabled() {
                 return enabled;
             }
-
+            
             public void setEnabled(boolean enabled) {
                 this.enabled = enabled;
+            }
+            
+            public IdempotencyProperties getIdempotency() {
+                return idempotency;
+            }
+            
+            public void setIdempotency(IdempotencyProperties idempotency) {
+                this.idempotency = idempotency;
+            }
+            
+            /**
+             * Idempotency configuration properties.
+             */
+            public static class IdempotencyProperties {
+                /**
+                 * Whether to enable idempotency for event processing.
+                 */
+                private boolean enabled = false;
+                
+                /**
+                 * Redis key prefix for idempotency status storage.
+                 */
+                private String redisKeyPrefix = "soda-events-idempotency";
+                
+                /**
+                 * Expiration time for idempotency status in seconds.
+                 */
+                private long expireTime = 86400; // 24 hours
+                
+                /**
+                 * Retry interval for idempotency status checks in milliseconds.
+                 */
+                private long retryInterval = 100;
+                
+                public boolean isEnabled() {
+                    return enabled;
+                }
+                
+                public void setEnabled(boolean enabled) {
+                    this.enabled = enabled;
+                }
+                
+                public String getRedisKeyPrefix() {
+                    return redisKeyPrefix;
+                }
+                
+                public void setRedisKeyPrefix(String redisKeyPrefix) {
+                    this.redisKeyPrefix = redisKeyPrefix;
+                }
+                
+                public long getExpireTime() {
+                    return expireTime;
+                }
+                
+                public void setExpireTime(long expireTime) {
+                    this.expireTime = expireTime;
+                }
+                
+                public long getRetryInterval() {
+                    return retryInterval;
+                }
+                
+                public void setRetryInterval(long retryInterval) {
+                    this.retryInterval = retryInterval;
+                }
             }
 
             public String getGroupName() {

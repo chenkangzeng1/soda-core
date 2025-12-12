@@ -21,6 +21,7 @@ import java.util.Map;
  **/
 public class SimpleCommandBus implements CommandBus {
     private static final Logger logger = LoggerFactory.getLogger(SimpleCommandBus.class);
+    private final EventProperties eventProperties;
     private final Map<Class<? extends Command>, CommandHandler<?, ?>> handlers = new ConcurrentHashMap<>();
 
     /**
@@ -28,6 +29,11 @@ public class SimpleCommandBus implements CommandBus {
      * @param commandHandlers the list of command handlers
      */
     public SimpleCommandBus(List<CommandHandler<?, ?>> commandHandlers) {
+        this(commandHandlers, null);
+    }
+
+    public SimpleCommandBus(List<CommandHandler<?, ?>> commandHandlers, EventProperties eventProperties) {
+        this.eventProperties = eventProperties;
         logger.info("[SimpleCommandBus] Constructor called, handlers size: {}", commandHandlers.size());
         for (CommandHandler<?, ?> handler : commandHandlers) {
             Class<?>[] typeArguments = GenericTypeResolver.resolveTypeArguments(
@@ -41,6 +47,18 @@ public class SimpleCommandBus implements CommandBus {
             }
         }
         logger.info("[SimpleCommandBus] Registered {} command handlers", handlers.size());
+        if (this.eventProperties != null) {
+            boolean streamEnabled = this.eventProperties.getRedis() != null
+                    && this.eventProperties.getRedis().getStream() != null
+                    && this.eventProperties.getRedis().getStream().isEnabled();
+            logger.info("[SimpleCommandBus] Event bus type: {}, stream.enabled: {}", 
+                    this.eventProperties.getBusType(), streamEnabled);
+            if (streamEnabled) {
+                logger.info("[SimpleCommandBus] Stream mode enabled: will rely on EventBus for async dispatch; no local sync dispatch in command bus");
+            }
+        } else {
+            logger.info("[SimpleCommandBus] EventProperties not available for logging");
+        }
     }
 
     @Override

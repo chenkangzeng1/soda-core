@@ -7,6 +7,7 @@ import java.util.List;
 
 public final class DomainEventContext {
     private static final ThreadLocal<List<AbstractDomainEvent>> holder = ThreadLocal.withInitial(ArrayList::new);
+    private static final ThreadLocal<Boolean> streamConsumer = ThreadLocal.withInitial(() -> false);
 
     public static void add(AbstractDomainEvent event) {
         if (event != null) {
@@ -26,5 +27,14 @@ public final class DomainEventContext {
 
     public static void clear() {
         holder.remove();
+        streamConsumer.remove();
+    }
+
+    public static void setStreamConsumer(boolean enabled) {
+        streamConsumer.set(enabled);
+    }
+
+    public static boolean isStreamConsumer() {
+        return streamConsumer.get();
     }
 }

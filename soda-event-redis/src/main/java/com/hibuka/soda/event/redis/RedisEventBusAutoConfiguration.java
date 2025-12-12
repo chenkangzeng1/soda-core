@@ -182,7 +182,8 @@ public class RedisEventBusAutoConfiguration {
             maxRetries,
             initialRetryDelay,
             exponentialBackoff,
-            deadLetterStream
+            deadLetterStream,
+            eventProperties.getRedis().getStream().getIdempotency()
         );
         
         logger.info("[RedisEventBusAutoConfiguration] Created RedisStreamEventBus (Stream mode)");

@@ -22,15 +22,18 @@ import org.slf4j.LoggerFactory;
 @Aspect
 public class CqrsAroundHandler {
     private final EventBus eventBus;
+    private final EventProperties eventProperties;
     private Logger logger = LoggerFactory.getLogger(CqrsAroundHandler.class);
 
     /**
      * Constructor for CqrsAroundHandler.
      * @param eventBus the event bus
      */
-    public CqrsAroundHandler(EventBus eventBus) {
+    public CqrsAroundHandler(EventBus eventBus, EventProperties eventProperties) {
         this.eventBus = eventBus;
+        this.eventProperties = eventProperties;
         logger.info("[CqrsAroundHandler] Bean created!");
+        logger.info("[CqrsAroundHandler] Injected EventBus: {}", eventBus.getClass().getName());
     }
 
     /**
@@ -49,6 +52,15 @@ public class CqrsAroundHandler {
         Object firstArg = (args != null && args.length > 0) ? args[0] : null;
         String username = null;
         String requestId = "";
+
+        boolean streamEnabled = isStreamEnabled();
+        boolean isEventHandler = firstArg instanceof AbstractDomainEvent;
+        boolean isStreamConsumer = com.hibuka.soda.core.context.DomainEventContext.isStreamConsumer();
+        boolean isAsyncStreamThread = Thread.currentThread().getName().startsWith("SimpleAsyncTaskExecutor");
+        if (isEventHandler && streamEnabled && !isStreamConsumer && !isAsyncStreamThread) {
+            logger.info("[CqrsAroundHandler] Stream enabled, skip EventHandler on thread: {}", Thread.currentThread().getName());
+            return null;
+        }
 
         if (firstArg instanceof BaseCommand) {
             requestId = ((BaseCommand) firstArg).getRequestId();
@@ -82,6 +94,7 @@ public class CqrsAroundHandler {
     @Around("execution(* com.hibuka.soda.cqrs.handle.CommandBus+.send(..))")
     public Object handleEventBus(ProceedingJoinPoint joinPoint) throws Throwable {
         logger.info("[CqrsAroundHandler] handleEventBus invoked! method: {}", joinPoint.getSignature());
+        logger.info("[CqrsAroundHandler] Current thread: {}, EventBus: {}", Thread.currentThread().getName(), eventBus.getClass().getName());
         // 执行原始命令
         Object result;
         try {
@@ -94,14 +107,27 @@ public class CqrsAroundHandler {
         if (args.length > 0 && args[0] instanceof BaseCommand) {
             // 如果命令执行后产生了领域事件，发布事件
             if (result instanceof DomainEvents) {
+                boolean streamEnabled = isStreamEnabled();
                 for (AbstractDomainEvent event : ((DomainEvents) result).getDomainEvents()) {
                     sycBaseInfo((BaseCommand) args[0], event);
-                    eventBus.publish(event);
+                    if (streamEnabled) {
+                        logger.info("[CqrsAroundHandler] Stream enabled, skip local immediate publish (DomainEvents path), will rely on repository aspect. eventId: {}, eventType: {}", event.getEventId(), event.getEventType());
+                    } else {
+                        logger.info("[CqrsAroundHandler] Publishing event via EventBus (DomainEvents path), eventId: {}, eventType: {}", event.getEventId(), event.getEventType());
+                        eventBus.publish(event);
+                    }
                 }
             }
             // 如果结果本身就是一个DomainEvent，直接发布
             else if (result instanceof DomainEvent) {
-                eventBus.publish((DomainEvent) result);
+                AbstractDomainEvent e = (AbstractDomainEvent) result;
+                boolean streamEnabled = isStreamEnabled();
+                if (streamEnabled) {
+                    logger.info("[CqrsAroundHandler] Stream enabled, skip local immediate publish (DomainEvent path), will rely on repository aspect. eventId: {}, eventType: {}", e.getEventId(), e.getEventType());
+                } else {
+                    logger.info("[CqrsAroundHandler] Publishing event via EventBus (DomainEvent path), eventId: {}, eventType: {}", e.getEventId(), e.getEventType());
+                    eventBus.publish((DomainEvent) result);
+                }
             }
         }
         return result;
@@ -113,5 +139,17 @@ public class CqrsAroundHandler {
         event.setAuthorities(command.getAuthorities());
         event.setUserName(command.getUserName());
         event.setCallerUid(command.getCallerUid());
+    }
+
+    private boolean isStreamEnabled() {
+        try {
+            return eventProperties != null
+                    && eventProperties.getRedis() != null
+                    && eventProperties.getRedis().getStream() != null
+                    && eventProperties.getRedis().getStream().isEnabled();
+        } catch (Exception e) {
+            logger.warn("[CqrsAroundHandler] Failed to read stream.enabled from EventProperties, defaulting to false: {}", e.getMessage());
+            return false;
+        }
     }
 }

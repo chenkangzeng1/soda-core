@@ -81,8 +81,11 @@ public class RepositoryEventAspect {
     }
     
     private void publishEvents(List<AbstractDomainEvent> events) {
+        log.info("Publishing {} domain events via {}, thread={}", 
+                events.size(), eventBus.getClass().getName(), Thread.currentThread().getName());
         for (AbstractDomainEvent event : events) {
             try {
+                log.info("Publishing event: eventId={}, eventType={}", event.getEventId(), event.getEventType());
                 eventBus.publish(event);
             } catch (Exception e) {
                 // 记录日志,便于排查问题

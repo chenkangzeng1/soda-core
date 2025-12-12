@@ -20,6 +20,10 @@ import org.springframework.data.redis.core.StreamOperations;
 import org.springframework.data.redis.stream.StreamListener;
 import org.springframework.data.redis.stream.StreamMessageListenerContainer;
 import org.springframework.data.redis.stream.Subscription;
+import com.hibuka.soda.core.EventProperties;
+import com.hibuka.soda.event.redis.service.IdempotencyService;
+import com.hibuka.soda.event.redis.service.impl.RedisIdempotencyServiceImpl;
+import org.springframework.scheduling.annotation.Scheduled;
 
 import java.time.Duration;
 import java.util.*;
@@ -48,10 +52,12 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
     private final int maxRetries;
     private final long initialRetryDelay;
     private final boolean exponentialBackoff;
+    private final EventProperties.RedisProperties.StreamProperties.IdempotencyProperties idempotencyProperties;
     
     private final Map<Class<? extends DomainEvent>, List<EventHandler>> handlers = new ConcurrentHashMap<>();
     private final Map<String, Class<? extends DomainEvent>> eventTypeToClassMap = new ConcurrentHashMap<>();
     private final ObjectMapper objectMapper;
+    private final IdempotencyService idempotencyService;
     
     private StreamMessageListenerContainer<?, ?> container;
     private Subscription subscription;
@@ -73,6 +79,7 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
      * @param initialRetryDelay Initial retry delay in milliseconds
      * @param exponentialBackoff Whether to use exponential backoff
      * @param deadLetterStream Name of the dead letter stream
+     * @param idempotencyProperties Idempotency configuration properties
      */
     public RedisStreamEventBus(RedisTemplate<String, Object> redisTemplate,
                               ApplicationEventPublisher applicationEventPublisher,
@@ -86,7 +93,9 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
                               int maxRetries,
                               long initialRetryDelay,
                               boolean exponentialBackoff,
-                              String deadLetterStream) {
+                              String deadLetterStream,
+                              EventProperties.RedisProperties.StreamProperties.IdempotencyProperties idempotencyProperties) {
+        logger.info("[RedisStreamEventBus] Constructor called, instance: {}", this.hashCode());
         this.redisTemplate = redisTemplate;
         this.applicationEventPublisher = applicationEventPublisher;
         this.redisConnectionFactory = redisConnectionFactory;
@@ -99,6 +108,7 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
         this.initialRetryDelay = initialRetryDelay;
         this.exponentialBackoff = exponentialBackoff;
         this.deadLetterStream = deadLetterStream;
+        this.idempotencyProperties = idempotencyProperties;
         
         // Create and configure ObjectMapper with JavaTimeModule support
         // We don't use reflection to get it from RedisTemplate anymore because the field name might change
@@ -113,8 +123,13 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
         
         this.objectMapper = mapper;
         
+        // Initialize idempotency service
+        this.idempotencyService = new RedisIdempotencyServiceImpl(redisTemplate, idempotencyProperties);
+        
         // Register event handlers
+        logger.info("[RedisStreamEventBus] Registering {} event handlers, instance: {}", eventHandlers.size(), this.hashCode());
         registerEventHandlers(eventHandlers);
+        logger.info("[RedisStreamEventBus] Constructor completed, instance: {}", this.hashCode());
     }
     
     /**
@@ -133,7 +148,7 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
                 Class<? extends DomainEvent> eventType = (Class<? extends DomainEvent>) typeArguments[0];
                 try {
                     subscribe(eventType, handler);
-                    logger.info("[RedisStreamEventBus] Registered handler for event: {}", eventType.getName());
+                    logger.info("[RedisStreamEventBus] Registered handler for event: {}, handlerClass: {}", eventType.getName(), handler.getClass().getName());
                 } catch (BaseException e) {
                     logger.error("[RedisStreamEventBus] Error registering handler for event {}: {}", eventType.getName(), e.getMessage(), e);
                     throw new RuntimeException("Failed to register event handler", e);
@@ -236,7 +251,7 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
     }
     
     /**
-     * Handles a stream message with retry logic and dead letter queue functionality.
+     * Handles a stream message with retry logic, dead letter queue functionality, and idempotency checks.
      *
      * @param message The stream message to handle
      */
@@ -244,36 +259,89 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
         logger.info("[RedisStreamEventBus] Received stream message: ID={}, Stream={}", message.getId(), message.getStream());
         
         boolean processed = false;
+        String eventId = null;
         
-        for (int retryCount = 0; retryCount <= maxRetries; retryCount++) {
-            try {
-                processed = handleStreamMessageInternal(message);
-                if (processed) {
-                    // Acknowledge the message using RedisTemplate
+        try {
+            // Extract eventId directly from message for idempotency check, without full deserialization
+            eventId = extractEventIdFromMessage(message);
+            
+            // Idempotency check: if enabled and event has ID, check if it's already processed
+            if (idempotencyProperties.isEnabled() && eventId != null) {
+                IdempotencyService.ProcessingStatus status = idempotencyService.getStatus(eventId);
+                if (status == IdempotencyService.ProcessingStatus.SUCCESS) {
+                    logger.info("[RedisStreamEventBus] Event already processed successfully, skipping: eventId={}, messageId={}", 
+                               eventId, message.getId());
+                    // Acknowledge the message immediately since it's already processed
                     redisTemplate.opsForStream().acknowledge(streamKey, groupName, message.getId());
-                    logger.info("[RedisStreamEventBus] Successfully processed message after {} retries: ID={}", retryCount, message.getId());
-                    break;
-                }
-            } catch (Exception e) {
-                if (retryCount < maxRetries) {
-                    long delay = calculateRetryDelay(retryCount);
-                    logger.warn("[RedisStreamEventBus] Failed to process message, retrying in {}ms (attempt {}/{}): ID={}, Error: {}", 
-                               delay, retryCount + 1, maxRetries + 1, message.getId(), e.getMessage());
-                    try {
-                        Thread.sleep(delay);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        logger.error("[RedisStreamEventBus] Retry sleep interrupted: {}", ie.getMessage());
-                        break;
-                    }
-                } else {
-                    logger.error("[RedisStreamEventBus] Maximum retries exceeded, moving to dead letter queue: ID={}", message.getId());
-                    moveToDeadLetterQueue(message, "Max retries exceeded");
-                    // Acknowledge the original message after moving to dead letter queue
-                    redisTemplate.opsForStream().acknowledge(streamKey, groupName, message.getId());
-                    break;
+                    return;
+                } else if (status == IdempotencyService.ProcessingStatus.PROCESSING) {
+                    logger.info("[RedisStreamEventBus] Event currently processing, skipping: eventId={}, messageId={}", 
+                               eventId, message.getId());
+                    // Don't acknowledge yet, let the processing instance handle it
+                    return;
                 }
             }
+            
+            for (int retryCount = 0; retryCount <= maxRetries; retryCount++) {
+                try {
+                    // Begin processing with idempotency check
+                    boolean canProcess = true;
+                    if (idempotencyProperties.isEnabled() && eventId != null) {
+                        canProcess = idempotencyService.beginProcessing(eventId);
+                    }
+                    
+                    if (canProcess) {
+                        processed = handleStreamMessageInternal(message);
+                        if (processed) {
+                            // Mark as success if idempotency is enabled
+                            if (idempotencyProperties.isEnabled() && eventId != null) {
+                                idempotencyService.markAsSuccess(eventId, new HashMap<>());
+                            }
+                            // Acknowledge the message using RedisTemplate
+                            redisTemplate.opsForStream().acknowledge(streamKey, groupName, message.getId());
+                            logger.info("[RedisStreamEventBus] Successfully processed message after {} retries: ID={}", retryCount, message.getId());
+                            break;
+                        } else {
+                            // Mark as failed if idempotency is enabled
+                            if (idempotencyProperties.isEnabled() && eventId != null) {
+                                idempotencyService.markAsFailed(eventId, "Processing returned false");
+                            }
+                        }
+                    } else {
+                        logger.info("[RedisStreamEventBus] Cannot process event due to idempotency check: eventId={}, messageId={}", 
+                                   eventId, message.getId());
+                        // Acknowledge if we can't process due to idempotency
+                        redisTemplate.opsForStream().acknowledge(streamKey, groupName, message.getId());
+                        break;
+                    }
+                } catch (Exception e) {
+                    // Mark as failed if idempotency is enabled
+                    if (idempotencyProperties.isEnabled() && eventId != null) {
+                        idempotencyService.markAsFailed(eventId, e.getMessage());
+                    }
+                    
+                    if (retryCount < maxRetries) {
+                        long delay = calculateRetryDelay(retryCount);
+                        logger.warn("[RedisStreamEventBus] Failed to process message, retrying in {}ms (attempt {}/{}): ID={}, Error: {}", 
+                                   delay, retryCount + 1, maxRetries + 1, message.getId(), e.getMessage());
+                        try {
+                            Thread.sleep(delay);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            logger.error("[RedisStreamEventBus] Retry sleep interrupted: {}", ie.getMessage());
+                            break;
+                        }
+                    } else {
+                        logger.error("[RedisStreamEventBus] Maximum retries exceeded, moving to dead letter queue: ID={}", message.getId());
+                        moveToDeadLetterQueue(message, "Max retries exceeded");
+                        // Acknowledge the original message after moving to dead letter queue
+                        redisTemplate.opsForStream().acknowledge(streamKey, groupName, message.getId());
+                        break;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.error("[RedisStreamEventBus] Error in message handling flow: {}", e.getMessage(), e);
         }
         
         if (!processed) {
@@ -281,6 +349,112 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
             moveToDeadLetterQueue(message, "Processing failed without exception");
             // Acknowledge the original message after moving to dead letter queue
             redisTemplate.opsForStream().acknowledge(streamKey, groupName, message.getId());
+        }
+    }
+    
+    /**
+     * Extracts the eventId from a stream message without full deserialization.
+     * This is optimized for idempotency checks, avoiding the need to fully deserialize events.
+     *
+     * @param message The stream message to extract eventId from
+     * @return eventId if extracted successfully, null otherwise
+     */
+    private String extractEventIdFromMessage(MapRecord<String, String, String> message) {
+        try {
+            // Get the serialized event from the message
+            String serializedEvent = message.getValue().get("event");
+            if (serializedEvent == null) {
+                return null;
+            }
+            
+            logger.debug("[RedisStreamEventBus] Extracting eventId from serialized event: {}", serializedEvent);
+            
+            // Create a simple ObjectMapper for parsing
+            ObjectMapper mapper = new ObjectMapper();
+            mapper.configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+            
+            try {
+                // Parse the JSON to get eventId directly
+                com.fasterxml.jackson.databind.JsonNode rootNode = mapper.readTree(serializedEvent);
+                
+                // Handle both array format [eventType, eventData] and direct object format
+                com.fasterxml.jackson.databind.JsonNode eventDataNode = rootNode;
+                if (rootNode.isArray() && rootNode.size() >= 2) {
+                    // Format is [eventType, eventData]
+                    logger.debug("[RedisStreamEventBus] Handling array format: [eventType, eventData]");
+                    eventDataNode = rootNode.get(1);
+                }
+                
+                // Extract eventId from eventData
+                if (eventDataNode.isObject()) {
+                    logger.debug("[RedisStreamEventBus] Event data is object, extracting eventId");
+                    com.fasterxml.jackson.databind.JsonNode eventIdNode = eventDataNode.get("eventId");
+                    if (eventIdNode != null && eventIdNode.isTextual()) {
+                        String eventId = eventIdNode.asText();
+                        logger.info("[RedisStreamEventBus] Successfully extracted eventId from message: {}", eventId);
+                        return eventId;
+                    } else {
+                        logger.warn("[RedisStreamEventBus] eventId field not found or not textual in eventData");
+                    }
+                } else {
+                    logger.warn("[RedisStreamEventBus] Event data is not an object, cannot extract eventId");
+                }
+            } catch (Exception e) {
+                logger.debug("[RedisStreamEventBus] Failed to extract eventId from message: {}", e.getMessage());
+                // Fallback: try full deserialization as last resort
+                DomainEvent event = extractEventFromMessage(message);
+                if (event != null) {
+                    String eventId = event.getEventId();
+                    logger.info("[RedisStreamEventBus] Extracted eventId from full deserialization: {}", eventId);
+                    return eventId;
+                }
+            }
+        } catch (Exception e) {
+            logger.error("[RedisStreamEventBus] Error extracting eventId from message: {}", e.getMessage(), e);
+        }
+        return null;
+    }
+    
+    /**
+     * Extracts the DomainEvent from a stream message without processing it.
+     * Used as fallback when direct eventId extraction fails.
+     *
+     * @param message The stream message to extract event from
+     * @return DomainEvent if extracted successfully, null otherwise
+     */
+    private DomainEvent extractEventFromMessage(MapRecord<String, String, String> message) {
+        try {
+            // Get the serialized event and type from the message
+            String serializedEvent = message.getValue().get("event");
+            String eventType = message.getValue().get("type");
+            
+            if (serializedEvent == null || eventType == null) {
+                return null;
+            }
+            
+            // Get the event class from the type map
+            Class<? extends DomainEvent> eventClass = eventTypeToClassMap.get(eventType);
+            
+            // Fallback: handle quoted event types (e.g., when RedisTemplate adds quotes)
+            if (eventClass == null) {
+                // Try removing quotes if present
+                String unquotedEventType = eventType;
+                if ((eventType.startsWith("\"") && eventType.endsWith("\"")) || 
+                    (eventType.startsWith("'") && eventType.endsWith("'"))) {
+                    unquotedEventType = eventType.substring(1, eventType.length() - 1);
+                    eventClass = eventTypeToClassMap.get(unquotedEventType);
+                }
+            }
+            
+            if (eventClass == null) {
+                return null;
+            }
+            
+            // Deserialize the event from JSON string
+            return deserializeDomainEvent(serializedEvent, eventClass);
+        } catch (Exception e) {
+            logger.error("[RedisStreamEventBus] Error extracting event from message: {}", e.getMessage(), e);
+            return null;
         }
     }
     
@@ -325,6 +499,9 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
             logger.error("[RedisStreamEventBus] No registered handler for event type: {}", eventType);
             return false;
         }
+        List<EventHandler> localHandlers = handlers.get(eventClass);
+        int handlerCount = localHandlers == null ? 0 : localHandlers.size();
+        logger.info("[RedisStreamEventBus] Resolved event class: {}, handlers registered: {}", eventClass.getName(), handlerCount);
         
         // Deserialize the event from JSON string using the comprehensive deserializeDomainEvent method
         logger.debug("[RedisStreamEventBus] Deserializing event from JSON: {}", serializedEvent);
@@ -332,11 +509,11 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
         DomainEvent event = deserializeDomainEvent(serializedEvent, eventClass);
         
         if (event != null) {
-            // Publish to local handlers
+            // Publish to local handlers - this ensures idempotency checks are applied
             publishToLocalHandlers(event);
             
-            // Publish to Spring application event publisher
-            applicationEventPublisher.publishEvent(event);
+            // Do NOT publish to Spring application event publisher to avoid duplicate processing
+            // applicationEventPublisher.publishEvent(event); // Removed to avoid duplicate processing
             
             logger.info("[RedisStreamEventBus] Successfully processed event: {}", event.getClass().getName());
         } else {
@@ -508,29 +685,80 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
     }
     
     /**
-     * Publishes event to local handlers.
+     * Publishes event to local handlers with idempotency check.
+     * This ensures each event is processed only once, even if it's received multiple times.
      *
      * @param event Domain event to publish
      */
     private void publishToLocalHandlers(DomainEvent event) throws Exception {
         List<EventHandler> eventHandlers = handlers.get(event.getClass());
-        if (eventHandlers != null) {
+        if (eventHandlers != null && event != null) {
+            logger.info("[RedisStreamEventBus] Preparing to publish to local handlers, eventType={}, eventId={}, handlers={}", 
+                    event.getClass().getName(), event.getEventId(), eventHandlers.size());
+            
+            String eventId = event.getEventId();
+            
+            com.hibuka.soda.core.context.DomainEventContext.setStreamConsumer(true);
+            // Flag to track if any handler failed
+            boolean anyHandlerFailed = false;
+            
             for (EventHandler handler : eventHandlers) {
+                String handlerName = handler.getClass().getName();
+                // Generate a unique ID for this specific handler execution
+                String handlerEventId = eventId + "::" + handlerName;
+                
                 try {
+                    // Check if this specific handler has already successfully processed this event
+                    if (idempotencyProperties.isEnabled() && eventId != null) {
+                        IdempotencyService.ProcessingStatus handlerStatus = idempotencyService.getStatus(handlerEventId);
+                        if (handlerStatus == IdempotencyService.ProcessingStatus.SUCCESS) {
+                            logger.info("[RedisStreamEventBus] Event already processed by handler {}, skipping: eventId={}", 
+                                    handlerName, eventId);
+                            continue;
+                        }
+                    }
+                    
+                    logger.info("[RedisStreamEventBus] Invoking local handler: {}, eventId={}, eventType={}", 
+                            handlerName, eventId, event.getClass().getName());
                     handler.handle(event);
+                    
+                    // Mark this specific handler as successful
+                    if (idempotencyProperties.isEnabled() && eventId != null) {
+                        idempotencyService.markAsSuccess(handlerEventId, new HashMap<>());
+                    }
                 } catch (Exception e) {
                     logger.error("[RedisStreamEventBus] Error handling event by local handler: {}", 
-                            handler.getClass().getName(), e);
-                    throw e; // Re-throw the exception to trigger retry mechanism
+                            handlerName, e);
+                    // Mark as failed if idempotency is enabled - for this specific handler
+                    if (idempotencyProperties.isEnabled() && eventId != null) {
+                        idempotencyService.markAsFailed(handlerEventId, e.getMessage());
+                    }
+                    // Don't rethrow immediately, continue to other handlers but mark as failed
+                    anyHandlerFailed = true;
                 }
             }
+            com.hibuka.soda.core.context.DomainEventContext.setStreamConsumer(false);
+            
+            if (anyHandlerFailed) {
+                // If any handler failed, throw exception to trigger Redis Stream retry
+                // But successfully executed handlers won't run again due to idempotency check
+                throw new RuntimeException("One or more handlers failed to process event " + eventId);
+            }
+            
+            // Mark as success if idempotency is enabled - for the overall event
+            // Only if ALL handlers succeeded
+            if (idempotencyProperties.isEnabled() && eventId != null) {
+                idempotencyService.markAsSuccess(eventId, new HashMap<>());
+            }
+            logger.info("[RedisStreamEventBus] Completed publish to local handlers, eventId={}", eventId);
         }
     }
     
     @Override
     public void publish(DomainEvent event) throws BaseException {
         try {
-            logger.info("[RedisStreamEventBus] Publishing event: {} to stream: {}", event.getClass().getName(), streamKey);
+            logger.info("[RedisStreamEventBus] Publishing event: {} to stream: {}, eventId: {}", 
+                       event.getClass().getName(), streamKey, event.getEventId());
             
             // Use the same approach as RedisEventBus - let RedisTemplate handle serialization
             // Create stream entry with field-value pairs
@@ -545,7 +773,8 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
             // Use RedisTemplate's opsForStream to add the entry
             logger.debug("[RedisStreamEventBus] Calling redisTemplate.opsForStream().add()");
             Object recordId = redisTemplate.opsForStream().add(streamKey, entry);
-            logger.info("[RedisStreamEventBus] Event published to stream: {}, recordId: {}", event.getClass().getName(), recordId);
+            logger.info("[RedisStreamEventBus] Event published to stream: {}, recordId: {}, eventId: {}", 
+                       event.getClass().getName(), recordId, event.getEventId());
             
             // Verify the stream was created
             Boolean streamExists = redisTemplate.hasKey(streamKey);
@@ -558,11 +787,10 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
                 logger.error("[RedisStreamEventBus] Failed to get record ID after publish");
             }
             
-            // Also publish to local application event publisher (same as RedisEventBus)
-            applicationEventPublisher.publishEvent(event);
-            
-            // Also publish to local handlers (same as RedisEventBus)
-            publishToLocalHandlers(event);
+            // Stream events should only be processed by the stream listener, not directly
+            // This ensures idempotency checks are applied consistently and prevents duplicate execution
+            // applicationEventPublisher.publishEvent(event); // Removed to avoid duplicate processing
+            // publishToLocalHandlers(event); // Removed to avoid duplicate processing
             
         } catch (Exception e) {
             logger.error("[RedisStreamEventBus] Error publishing event: {}", e.getMessage(), e);
@@ -583,6 +811,23 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
         if (eventHandlers != null) {
             eventHandlers.remove(handler);
             logger.info("[RedisStreamEventBus] Unsubscribed handler for event: {}", eventType.getName());
+        }
+    }
+    
+    /**
+     * Scheduled task to clean up expired idempotency status records.
+     * Runs every hour by default.
+     */
+    @Scheduled(fixedRate = 3600000)
+    public void cleanupExpiredIdempotencyStatus() {
+        if (idempotencyProperties.isEnabled()) {
+            try {
+                logger.info("[RedisStreamEventBus] Starting cleanup of expired idempotency status records");
+                idempotencyService.cleanupExpiredStatus();
+                logger.info("[RedisStreamEventBus] Completed cleanup of expired idempotency status records");
+            } catch (Exception e) {
+                logger.error("[RedisStreamEventBus] Error during idempotency status cleanup: {}", e.getMessage(), e);
+            }
         }
     }
 }

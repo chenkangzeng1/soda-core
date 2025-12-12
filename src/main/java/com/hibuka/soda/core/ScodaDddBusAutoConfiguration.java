@@ -46,8 +46,8 @@ public class ScodaDddBusAutoConfiguration {
      * @return the CQRS around handler
      */
     @Bean
-    public CqrsAroundHandler cqrsAroundHandler(EventBus eventBus) {
-        return new CqrsAroundHandler(eventBus);
+    public CqrsAroundHandler cqrsAroundHandler(EventBus eventBus, EventProperties eventProperties) {
+        return new CqrsAroundHandler(eventBus, eventProperties);
     }
 
     /**
@@ -84,8 +84,8 @@ public class ScodaDddBusAutoConfiguration {
      * @return the simple command bus
      */
     @Bean
-    public CommandBus simpleCommandBus(List<CommandHandler<?, ?>> commandHandlers) {
-        return new SimpleCommandBus(commandHandlers);
+    public CommandBus simpleCommandBus(List<CommandHandler<?, ?>> commandHandlers, EventProperties eventProperties) {
+        return new SimpleCommandBus(commandHandlers, eventProperties);
     }
 
     /**
