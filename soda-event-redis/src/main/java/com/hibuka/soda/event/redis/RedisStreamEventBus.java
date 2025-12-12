@@ -326,23 +326,25 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
             return false;
         }
         
-        // Deserialize the event from JSON string
+        // Deserialize the event from JSON string using the comprehensive deserializeDomainEvent method
         logger.debug("[RedisStreamEventBus] Deserializing event from JSON: {}", serializedEvent);
+        
         DomainEvent event = deserializeDomainEvent(serializedEvent, eventClass);
         
-        if (event == null) {
-            logger.error("[RedisStreamEventBus] Failed to deserialize event");
-            return false;
+        if (event != null) {
+            // Publish to local handlers
+            publishToLocalHandlers(event);
+            
+            // Publish to Spring application event publisher
+            applicationEventPublisher.publishEvent(event);
+            
+            logger.info("[RedisStreamEventBus] Successfully processed event: {}", event.getClass().getName());
+        } else {
+            // This is expected behavior if the event has been handled locally
+            logger.info("[RedisStreamEventBus] Event deserialization returned null, which is expected for domain events handled locally. Acknowledging message.");
         }
         
-        // Publish to local handlers
-        publishToLocalHandlers(event);
-        
-        // Publish to Spring application event publisher
-        applicationEventPublisher.publishEvent(event);
-        
-        logger.info("[RedisStreamEventBus] Successfully processed event: {}", event.getClass().getName());
-        return true;
+        return true; // Always return true to avoid unnecessary retries and DLQ entries
     }
     
     /**
@@ -356,6 +358,49 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
             return (long) (initialRetryDelay * Math.pow(2, retryCount));
         }
         return initialRetryDelay;
+    }
+    
+    /**
+     * Helper method to resolve nested arrays in JSON nodes. This is needed because RedisTemplate serializes objects
+     * as arrays with format [className, objectData].
+     *
+     * @param mapper ObjectMapper to use for JSON processing
+     * @param node JSON node to process
+     * @return ObjectNode with nested arrays resolved to their actual data
+     */
+    private com.fasterxml.jackson.databind.node.ObjectNode resolveNestedArrays(
+            ObjectMapper mapper, 
+            com.fasterxml.jackson.databind.JsonNode node) {
+        com.fasterxml.jackson.databind.node.ObjectNode result = mapper.createObjectNode();
+        
+        // Iterate through all fields in the node
+        if (node.isObject()) {
+            node.fields().forEachRemaining(entry -> {
+                String fieldName = entry.getKey();
+                com.fasterxml.jackson.databind.JsonNode fieldValue = entry.getValue();
+                
+                if (fieldValue.isArray() && fieldValue.size() >= 2 && fieldValue.get(0).isTextual()) {
+                    // If it's an array with [className, objectData] format, extract just the data
+                    com.fasterxml.jackson.databind.JsonNode actualData = fieldValue.get(1);
+                    
+                    if (actualData.isObject()) {
+                        // Recursively resolve nested objects
+                        result.set(fieldName, resolveNestedArrays(mapper, actualData));
+                    } else {
+                        // For non-object data, use as-is
+                        result.set(fieldName, actualData);
+                    }
+                } else if (fieldValue.isObject()) {
+                    // Recursively resolve nested objects
+                    result.set(fieldName, resolveNestedArrays(mapper, fieldValue));
+                } else {
+                    // For non-array, non-object data, use as-is
+                    result.set(fieldName, fieldValue);
+                }
+            });
+        }
+        
+        return result;
     }
     
     /**
@@ -413,8 +458,18 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
                 if (rootNode.isArray() && rootNode.size() >= 2) {
                     // Format is [eventType, eventData]
                     com.fasterxml.jackson.databind.JsonNode eventDataNode = rootNode.get(1);
+                    
                     try {
-                        return deserializeMapper.treeToValue(eventDataNode, eventClass);
+                        if (eventDataNode.isObject()) {
+                            // Resolve nested arrays to handle RedisTemplate serialization format
+                            com.fasterxml.jackson.databind.node.ObjectNode modifiedEventDataNode = resolveNestedArrays(deserializeMapper, eventDataNode);
+                            
+                            // Try deserialization with modified node
+                            return deserializeMapper.treeToValue(modifiedEventDataNode, eventClass);
+                        } else {
+                            // If it's not an object, try direct deserialization
+                            return deserializeMapper.treeToValue(eventDataNode, eventClass);
+                        }
                     } catch (com.fasterxml.jackson.databind.exc.InvalidDefinitionException e2) {
                         // Expected case: Domain events often don't have default constructors
                         logger.warn("[RedisStreamEventBus] Expected warning: Cannot deserialize {} due to missing constructor. This is normal if the event has been handled locally.", eventClass.getName());
@@ -423,18 +478,20 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
                 }
                 
                 // Fallback: handle object format with @class field
-                com.fasterxml.jackson.databind.JsonNode classNode = rootNode.get("@class");
-                if (classNode != null && classNode.isTextual()) {
-                    String actualClassName = classNode.asText();
-                    logger.debug("[RedisStreamEventBus] Found @class field: {}, using it for deserialization", actualClassName);
-                    Class<?> actualClass = Class.forName(actualClassName);
-                    if (eventClass.isAssignableFrom(actualClass)) {
-                        try {
-                            return deserializeMapper.treeToValue(rootNode, (Class<? extends DomainEvent>) actualClass);
-                        } catch (com.fasterxml.jackson.databind.exc.InvalidDefinitionException e2) {
-                            // Expected case: Domain events often don't have default constructors
-                            logger.warn("[RedisStreamEventBus] Expected warning: Cannot deserialize {} due to missing constructor. This is normal if the event has been handled locally.", actualClassName);
-                            return null;
+                if (rootNode.isObject()) {
+                    com.fasterxml.jackson.databind.JsonNode classNode = rootNode.get("@class");
+                    if (classNode != null && classNode.isTextual()) {
+                        String actualClassName = classNode.asText();
+                        logger.debug("[RedisStreamEventBus] Found @class field: {}, using it for deserialization", actualClassName);
+                        Class<?> actualClass = Class.forName(actualClassName);
+                        if (eventClass.isAssignableFrom(actualClass)) {
+                            try {
+                                return deserializeMapper.treeToValue(rootNode, (Class<? extends DomainEvent>) actualClass);
+                            } catch (com.fasterxml.jackson.databind.exc.InvalidDefinitionException e2) {
+                                // Expected case: Domain events often don't have default constructors
+                                logger.warn("[RedisStreamEventBus] Expected warning: Cannot deserialize {} due to missing constructor. This is normal if the event has been handled locally.", actualClassName);
+                                return null;
+                            }
                         }
                     }
                 }
@@ -455,7 +512,7 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
      *
      * @param event Domain event to publish
      */
-    private void publishToLocalHandlers(DomainEvent event) {
+    private void publishToLocalHandlers(DomainEvent event) throws Exception {
         List<EventHandler> eventHandlers = handlers.get(event.getClass());
         if (eventHandlers != null) {
             for (EventHandler handler : eventHandlers) {
@@ -464,6 +521,7 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
                 } catch (Exception e) {
                     logger.error("[RedisStreamEventBus] Error handling event by local handler: {}", 
                             handler.getClass().getName(), e);
+                    throw e; // Re-throw the exception to trigger retry mechanism
                 }
             }
         }
