@@ -604,7 +604,7 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
     }
     
     /**
-     * Deserializes a JSON string to a DomainEvent using the same approach as RedisEventBus.
+     * Deserializes a JSON string to a DomainEvent.
      *
      * @param json The JSON string to deserialize
      * @param eventClass The specific DomainEvent class to deserialize to
@@ -760,7 +760,6 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
             logger.info("[RedisStreamEventBus] Publishing event: {} to stream: {}, eventId: {}", 
                        event.getClass().getName(), streamKey, event.getEventId());
             
-            // Use the same approach as RedisEventBus - let RedisTemplate handle serialization
             // Create stream entry with field-value pairs
             Map<String, Object> entry = new HashMap<>();
             

@@ -103,42 +103,10 @@ public class RedisEventBusAutoConfiguration {
         return template;
     }
     
-    /**
-     * Creates a Redis Pub/Sub event bus instance when Stream mode is disabled.
-     *
-     * @param sodaRedisEventBusTemplate Default Redis template for soda event bus
-     * @param applicationEventPublisher Spring's application event publisher
-     * @param redisConnectionFactory Redis connection factory
-     * @param eventHandlers List of event handlers to register
-     * @return Redis Pub/Sub event bus instance
-     */
-    @Bean
-    @Primary
-    @ConditionalOnBean(RedisConnectionFactory.class)
-    @ConditionalOnProperty(name = "soda.event.redis.stream.enabled", havingValue = "false", matchIfMissing = true)
-    public EventBus redisEventBus(@Qualifier("sodaRedisEventBusTemplate") RedisTemplate<String, Object> sodaRedisEventBusTemplate,
-                                 ApplicationEventPublisher applicationEventPublisher,
-                                 RedisConnectionFactory redisConnectionFactory,
-                                 List<EventHandler<? extends DomainEvent>> eventHandlers) {
-        logger.info("[RedisEventBusAutoConfiguration] Creating RedisEventBus (Pub/Sub mode)");
-        // Get topic name from configuration or use default
-        String topicName = eventProperties.getRedis().getTopic();
-        logger.info("[RedisEventBusAutoConfiguration] Redis topic: {}", topicName);
-        
-        RedisEventBus redisEventBus = new RedisEventBus(
-            sodaRedisEventBusTemplate,
-            applicationEventPublisher,
-            redisConnectionFactory,
-            eventHandlers,
-            topicName
-        );
-        
-        logger.info("[RedisEventBusAutoConfiguration] Created RedisEventBus (Pub/Sub mode)");
-        return redisEventBus;
-    }
+
     
     /**
-     * Creates a Redis Stream event bus instance when Stream mode is enabled.
+     * Creates a Redis Stream event bus instance.
      *
      * @param sodaRedisEventBusTemplate Default Redis template for soda event bus
      * @param applicationEventPublisher Spring's application event publisher
@@ -149,7 +117,7 @@ public class RedisEventBusAutoConfiguration {
     @Bean
     @Primary
     @ConditionalOnBean(RedisConnectionFactory.class)
-    @ConditionalOnProperty(name = "soda.event.redis.stream.enabled", havingValue = "true")
+    @ConditionalOnProperty(name = "soda.event.redis.stream.enabled", havingValue = "false", matchIfMissing = true)
     public EventBus redisStreamEventBus(@Qualifier("sodaRedisEventBusTemplate") RedisTemplate<String, Object> sodaRedisEventBusTemplate,
                                        ApplicationEventPublisher applicationEventPublisher,
                                        RedisConnectionFactory redisConnectionFactory,

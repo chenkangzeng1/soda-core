@@ -11,12 +11,12 @@ import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSeriali
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Test cases for RedisEventBus circular reference handling.
+ * Test cases for Redis event serialization circular reference handling.
  *
  * @author kangzeng.ckz
- * @since 20205-12-12-12
+ * @since 2025-12-12
  */
-class RedisEventBusCircularReferenceTest {
+class RedisEventSerializationTest {
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(RedisEventBusAutoConfiguration.class));
     
