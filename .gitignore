@@ -17,7 +17,7 @@
 *.ear
 *.zip
 *.tar.gz
-*.log.txt
+*log.txt
 *.rar
 
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
@@ -241,4 +241,4 @@ docker-compose.override.yml
 # Local development files
 local/
 dev-local/
-prod-local/ 
+prod-local/
