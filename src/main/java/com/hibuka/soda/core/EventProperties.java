@@ -98,6 +98,11 @@ public class EventProperties {
          */
         private int database = 0;
 
+        /**
+         * Redis Stream configuration.
+         */
+        private StreamProperties stream = new StreamProperties();
+
         public String getTopic() {
             return topic;
         }
@@ -136,6 +141,97 @@ public class EventProperties {
 
         public void setDatabase(int database) {
             this.database = database;
+        }
+
+        public StreamProperties getStream() {
+            return stream;
+        }
+
+        public void setStream(StreamProperties stream) {
+            this.stream = stream;
+        }
+
+        /**
+         * Redis Stream configuration properties.
+         */
+        public static class StreamProperties {
+            /**
+             * Whether to enable Redis Stream mode.
+             */
+            private boolean enabled = false;
+
+            /**
+             * Consumer group name.
+             */
+            private String groupName = "soda-events-group";
+
+            /**
+             * Consumer name.
+             */
+            private String consumerName = "soda-events-consumer-" + System.getProperty("server.port", "0");
+
+            /**
+             * Maximum length of the Stream.
+             */
+            private long maxlen = 10000;
+
+            /**
+             * Poll timeout in milliseconds.
+             */
+            private long pollTimeout = 1000;
+
+            /**
+             * Acknowledge timeout in milliseconds.
+             */
+            private long acknowledgeTimeout = 30000;
+
+            public boolean isEnabled() {
+                return enabled;
+            }
+
+            public void setEnabled(boolean enabled) {
+                this.enabled = enabled;
+            }
+
+            public String getGroupName() {
+                return groupName;
+            }
+
+            public void setGroupName(String groupName) {
+                this.groupName = groupName;
+            }
+
+            public String getConsumerName() {
+                return consumerName;
+            }
+
+            public void setConsumerName(String consumerName) {
+                this.consumerName = consumerName;
+            }
+
+            public long getMaxlen() {
+                return maxlen;
+            }
+
+            public void setMaxlen(long maxlen) {
+                this.maxlen = maxlen;
+            }
+
+            public long getPollTimeout() {
+                return pollTimeout;
+            }
+
+            public void setPollTimeout(long pollTimeout) {
+                this.pollTimeout = pollTimeout;
+            }
+
+            public long getAcknowledgeTimeout() {
+                return acknowledgeTimeout;
+            }
+
+            public void setAcknowledgeTimeout(long acknowledgeTimeout) {
+                this.acknowledgeTimeout = acknowledgeTimeout;
+            }
         }
     }
 

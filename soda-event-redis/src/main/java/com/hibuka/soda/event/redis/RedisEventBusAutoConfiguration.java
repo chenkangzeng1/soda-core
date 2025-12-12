@@ -104,22 +104,23 @@ public class RedisEventBusAutoConfiguration {
     }
     
     /**
-     * Creates a Redis event bus instance using the soda-provided Redis template.
+     * Creates a Redis Pub/Sub event bus instance when Stream mode is disabled.
      *
      * @param sodaRedisEventBusTemplate Default Redis template for soda event bus
      * @param applicationEventPublisher Spring's application event publisher
      * @param redisConnectionFactory Redis connection factory
      * @param eventHandlers List of event handlers to register
-     * @return Redis event bus instance
+     * @return Redis Pub/Sub event bus instance
      */
     @Bean
     @Primary
     @ConditionalOnBean(RedisConnectionFactory.class)
+    @ConditionalOnProperty(name = "soda.event.redis.stream.enabled", havingValue = "false", matchIfMissing = true)
     public EventBus redisEventBus(@Qualifier("sodaRedisEventBusTemplate") RedisTemplate<String, Object> sodaRedisEventBusTemplate,
                                  ApplicationEventPublisher applicationEventPublisher,
                                  RedisConnectionFactory redisConnectionFactory,
                                  List<EventHandler<? extends DomainEvent>> eventHandlers) {
-        logger.info("[RedisEventBusAutoConfiguration] Creating RedisEventBus");
+        logger.info("[RedisEventBusAutoConfiguration] Creating RedisEventBus (Pub/Sub mode)");
         // Get topic name from configuration or use default
         String topicName = eventProperties.getRedis().getTopic();
         logger.info("[RedisEventBusAutoConfiguration] Redis topic: {}", topicName);
@@ -132,8 +133,52 @@ public class RedisEventBusAutoConfiguration {
             topicName
         );
         
-        logger.info("[RedisEventBusAutoConfiguration] Created RedisEventBus");
+        logger.info("[RedisEventBusAutoConfiguration] Created RedisEventBus (Pub/Sub mode)");
         return redisEventBus;
+    }
+    
+    /**
+     * Creates a Redis Stream event bus instance when Stream mode is enabled.
+     *
+     * @param sodaRedisEventBusTemplate Default Redis template for soda event bus
+     * @param applicationEventPublisher Spring's application event publisher
+     * @param redisConnectionFactory Redis connection factory
+     * @param eventHandlers List of event handlers to register
+     * @return Redis Stream event bus instance
+     */
+    @Bean
+    @Primary
+    @ConditionalOnBean(RedisConnectionFactory.class)
+    @ConditionalOnProperty(name = "soda.event.redis.stream.enabled", havingValue = "true")
+    public EventBus redisStreamEventBus(@Qualifier("sodaRedisEventBusTemplate") RedisTemplate<String, Object> sodaRedisEventBusTemplate,
+                                       ApplicationEventPublisher applicationEventPublisher,
+                                       RedisConnectionFactory redisConnectionFactory,
+                                       List<EventHandler<? extends DomainEvent>> eventHandlers) {
+        logger.info("[RedisEventBusAutoConfiguration] Creating RedisStreamEventBus (Stream mode)");
+        // Get configuration from properties
+        String topicName = eventProperties.getRedis().getTopic();
+        String groupName = eventProperties.getRedis().getStream().getGroupName();
+        String consumerName = eventProperties.getRedis().getStream().getConsumerName();
+        long maxlen = eventProperties.getRedis().getStream().getMaxlen();
+        long pollTimeout = eventProperties.getRedis().getStream().getPollTimeout();
+        
+        logger.info("[RedisEventBusAutoConfiguration] Redis Stream configuration: topic={}, group={}, consumer={}, maxlen={}, pollTimeout={}",
+                   topicName, groupName, consumerName, maxlen, pollTimeout);
+        
+        RedisStreamEventBus redisStreamEventBus = new RedisStreamEventBus(
+            sodaRedisEventBusTemplate,
+            applicationEventPublisher,
+            redisConnectionFactory,
+            eventHandlers,
+            topicName,
+            groupName,
+            consumerName,
+            maxlen,
+            pollTimeout
+        );
+        
+        logger.info("[RedisEventBusAutoConfiguration] Created RedisStreamEventBus (Stream mode)");
+        return redisStreamEventBus;
     }
     
     /**
