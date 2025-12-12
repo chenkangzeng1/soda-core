@@ -161,9 +161,13 @@ public class RedisEventBusAutoConfiguration {
         String consumerName = eventProperties.getRedis().getStream().getConsumerName();
         long maxlen = eventProperties.getRedis().getStream().getMaxlen();
         long pollTimeout = eventProperties.getRedis().getStream().getPollTimeout();
+        int maxRetries = eventProperties.getRedis().getStream().getMaxRetries();
+        long initialRetryDelay = eventProperties.getRedis().getStream().getInitialRetryDelay();
+        boolean exponentialBackoff = eventProperties.getRedis().getStream().isExponentialBackoff();
+        String deadLetterStream = eventProperties.getRedis().getStream().getDeadLetterStream();
         
-        logger.info("[RedisEventBusAutoConfiguration] Redis Stream configuration: topic={}, group={}, consumer={}, maxlen={}, pollTimeout={}",
-                   topicName, groupName, consumerName, maxlen, pollTimeout);
+        logger.info("[RedisEventBusAutoConfiguration] Redis Stream configuration: topic={}, group={}, consumer={}, maxlen={}, pollTimeout={}, maxRetries={}, initialRetryDelay={}, exponentialBackoff={}, deadLetterStream={}",
+                   topicName, groupName, consumerName, maxlen, pollTimeout, maxRetries, initialRetryDelay, exponentialBackoff, deadLetterStream);
         
         RedisStreamEventBus redisStreamEventBus = new RedisStreamEventBus(
             sodaRedisEventBusTemplate,
@@ -174,7 +178,11 @@ public class RedisEventBusAutoConfiguration {
             groupName,
             consumerName,
             maxlen,
-            pollTimeout
+            pollTimeout,
+            maxRetries,
+            initialRetryDelay,
+            exponentialBackoff,
+            deadLetterStream
         );
         
         logger.info("[RedisEventBusAutoConfiguration] Created RedisStreamEventBus (Stream mode)");

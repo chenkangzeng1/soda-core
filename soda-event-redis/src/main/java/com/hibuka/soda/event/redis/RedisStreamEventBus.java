@@ -44,6 +44,10 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
     private final String consumerName;
     private final long maxlen;
     private final long pollTimeout;
+    private final String deadLetterStream;
+    private final int maxRetries;
+    private final long initialRetryDelay;
+    private final boolean exponentialBackoff;
     
     private final Map<Class<? extends DomainEvent>, List<EventHandler>> handlers = new ConcurrentHashMap<>();
     private final Map<String, Class<? extends DomainEvent>> eventTypeToClassMap = new ConcurrentHashMap<>();
@@ -65,6 +69,10 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
      * @param consumerName Consumer name
      * @param maxlen Maximum stream length
      * @param pollTimeout Poll timeout in milliseconds
+     * @param maxRetries Maximum number of retries
+     * @param initialRetryDelay Initial retry delay in milliseconds
+     * @param exponentialBackoff Whether to use exponential backoff
+     * @param deadLetterStream Name of the dead letter stream
      */
     public RedisStreamEventBus(RedisTemplate<String, Object> redisTemplate,
                               ApplicationEventPublisher applicationEventPublisher,
@@ -74,7 +82,11 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
                               String groupName,
                               String consumerName,
                               long maxlen,
-                              long pollTimeout) {
+                              long pollTimeout,
+                              int maxRetries,
+                              long initialRetryDelay,
+                              boolean exponentialBackoff,
+                              String deadLetterStream) {
         this.redisTemplate = redisTemplate;
         this.applicationEventPublisher = applicationEventPublisher;
         this.redisConnectionFactory = redisConnectionFactory;
@@ -83,6 +95,10 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
         this.consumerName = consumerName;
         this.maxlen = maxlen;
         this.pollTimeout = pollTimeout;
+        this.maxRetries = maxRetries;
+        this.initialRetryDelay = initialRetryDelay;
+        this.exponentialBackoff = exponentialBackoff;
+        this.deadLetterStream = deadLetterStream;
         
         // Create and configure ObjectMapper with JavaTimeModule support
         // We don't use reflection to get it from RedisTemplate anymore because the field name might change
@@ -202,16 +218,16 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
             @Override
             public void onMessage(MapRecord<String, String, String> message) {
                 try {
-                    handleStreamMessage(message);
+                    handleStreamMessageWithRetry(message);
                 } catch (Exception e) {
                     logger.error("[RedisStreamEventBus] Error handling stream message: {}", e.getMessage(), e);
                 }
             }
         };
         
-        // Use raw types for subscription to avoid generics mismatch
+        // Use manual ACK by calling receive() instead of receiveAutoAck()
         @SuppressWarnings({"rawtypes", "unchecked"})
-        Subscription subscription = container.receiveAutoAck(consumer, streamOffset, listener);
+        Subscription subscription = container.receive(consumer, streamOffset, listener);
         this.subscription = subscription;
         
         // Start the container
@@ -220,66 +236,148 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
     }
     
     /**
-     * Handles a stream message by deserializing and dispatching it to handlers.
+     * Handles a stream message with retry logic and dead letter queue functionality.
      *
      * @param message The stream message to handle
      */
-    private void handleStreamMessage(MapRecord<String, String, String> message) {
+    private void handleStreamMessageWithRetry(MapRecord<String, String, String> message) {
         logger.info("[RedisStreamEventBus] Received stream message: ID={}, Stream={}", message.getId(), message.getStream());
         
-        try {
-            // Get the serialized event and type from the message
-            String serializedEvent = message.getValue().get("event");
-            String eventType = message.getValue().get("type");
-            
-            if (serializedEvent == null) {
-                logger.error("[RedisStreamEventBus] Missing 'event' field in stream message");
-                return;
-            }
-            
-            if (eventType == null) {
-                logger.error("[RedisStreamEventBus] Missing 'type' field in stream message");
-                return;
-            }
-            
-            // Get the event class from the type map
-            Class<? extends DomainEvent> eventClass = eventTypeToClassMap.get(eventType);
-            
-            // Fallback: handle quoted event types (e.g., when RedisTemplate adds quotes)
-            if (eventClass == null) {
-                // Try removing quotes if present
-                String unquotedEventType = eventType;
-                if ((eventType.startsWith("\"") && eventType.endsWith("\"")) || 
-                    (eventType.startsWith("'")) && eventType.endsWith("'")) {
-                    unquotedEventType = eventType.substring(1, eventType.length() - 1);
-                    logger.debug("[RedisStreamEventBus] Trying unquoted event type: {}", unquotedEventType);
-                    eventClass = eventTypeToClassMap.get(unquotedEventType);
+        boolean processed = false;
+        
+        for (int retryCount = 0; retryCount <= maxRetries; retryCount++) {
+            try {
+                processed = handleStreamMessageInternal(message);
+                if (processed) {
+                    // Acknowledge the message using RedisTemplate
+                    redisTemplate.opsForStream().acknowledge(streamKey, groupName, message.getId());
+                    logger.info("[RedisStreamEventBus] Successfully processed message after {} retries: ID={}", retryCount, message.getId());
+                    break;
+                }
+            } catch (Exception e) {
+                if (retryCount < maxRetries) {
+                    long delay = calculateRetryDelay(retryCount);
+                    logger.warn("[RedisStreamEventBus] Failed to process message, retrying in {}ms (attempt {}/{}): ID={}, Error: {}", 
+                               delay, retryCount + 1, maxRetries + 1, message.getId(), e.getMessage());
+                    try {
+                        Thread.sleep(delay);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        logger.error("[RedisStreamEventBus] Retry sleep interrupted: {}", ie.getMessage());
+                        break;
+                    }
+                } else {
+                    logger.error("[RedisStreamEventBus] Maximum retries exceeded, moving to dead letter queue: ID={}", message.getId());
+                    moveToDeadLetterQueue(message, "Max retries exceeded");
+                    // Acknowledge the original message after moving to dead letter queue
+                    redisTemplate.opsForStream().acknowledge(streamKey, groupName, message.getId());
+                    break;
                 }
             }
-            
-            if (eventClass == null) {
-                logger.error("[RedisStreamEventBus] No registered handler for event type: {}", eventType);
-                return;
+        }
+        
+        if (!processed) {
+            logger.error("[RedisStreamEventBus] Message processing failed without exception, moving to dead letter queue: ID={}", message.getId());
+            moveToDeadLetterQueue(message, "Processing failed without exception");
+            // Acknowledge the original message after moving to dead letter queue
+            redisTemplate.opsForStream().acknowledge(streamKey, groupName, message.getId());
+        }
+    }
+    
+    /**
+     * Internal method to handle stream message processing without retry logic.
+     *
+     * @param message The stream message to handle
+     * @return true if processing was successful, false otherwise
+     * @throws Exception if an error occurs during processing
+     */
+    private boolean handleStreamMessageInternal(MapRecord<String, String, String> message) throws Exception {
+        // Get the serialized event and type from the message
+        String serializedEvent = message.getValue().get("event");
+        String eventType = message.getValue().get("type");
+        
+        if (serializedEvent == null) {
+            logger.error("[RedisStreamEventBus] Missing 'event' field in stream message");
+            return false;
+        }
+        
+        if (eventType == null) {
+            logger.error("[RedisStreamEventBus] Missing 'type' field in stream message");
+            return false;
+        }
+        
+        // Get the event class from the type map
+        Class<? extends DomainEvent> eventClass = eventTypeToClassMap.get(eventType);
+        
+        // Fallback: handle quoted event types (e.g., when RedisTemplate adds quotes)
+        if (eventClass == null) {
+            // Try removing quotes if present
+            String unquotedEventType = eventType;
+            if ((eventType.startsWith("\"") && eventType.endsWith("\"")) || 
+                (eventType.startsWith("'")) && eventType.endsWith("'")) {
+                unquotedEventType = eventType.substring(1, eventType.length() - 1);
+                logger.debug("[RedisStreamEventBus] Trying unquoted event type: {}", unquotedEventType);
+                eventClass = eventTypeToClassMap.get(unquotedEventType);
             }
+        }
+        
+        if (eventClass == null) {
+            logger.error("[RedisStreamEventBus] No registered handler for event type: {}", eventType);
+            return false;
+        }
+        
+        // Deserialize the event from JSON string
+        logger.debug("[RedisStreamEventBus] Deserializing event from JSON: {}", serializedEvent);
+        DomainEvent event = deserializeDomainEvent(serializedEvent, eventClass);
+        
+        if (event == null) {
+            logger.error("[RedisStreamEventBus] Failed to deserialize event");
+            return false;
+        }
+        
+        // Publish to local handlers
+        publishToLocalHandlers(event);
+        
+        // Publish to Spring application event publisher
+        applicationEventPublisher.publishEvent(event);
+        
+        logger.info("[RedisStreamEventBus] Successfully processed event: {}", event.getClass().getName());
+        return true;
+    }
+    
+    /**
+     * Calculates the retry delay based on the retry count and exponential backoff setting.
+     *
+     * @param retryCount The current retry count (0-based)
+     * @return The calculated delay in milliseconds
+     */
+    private long calculateRetryDelay(int retryCount) {
+        if (exponentialBackoff) {
+            return (long) (initialRetryDelay * Math.pow(2, retryCount));
+        }
+        return initialRetryDelay;
+    }
+    
+    /**
+     * Moves a message to the dead letter queue.
+     *
+     * @param message The message to move
+     * @param reason The reason for moving to dead letter queue
+     */
+    private void moveToDeadLetterQueue(MapRecord<String, String, String> message, String reason) {
+        try {
+            Map<String, Object> deadLetterEntry = new HashMap<>(message.getValue());
+            deadLetterEntry.put("deadLetterReason", reason);
+            deadLetterEntry.put("deadLetterTimestamp", System.currentTimeMillis());
+            deadLetterEntry.put("originalStream", message.getStream());
+            deadLetterEntry.put("originalId", message.getId().getValue());
             
-            // Deserialize the event from JSON string
-            logger.debug("[RedisStreamEventBus] Deserializing event from JSON: {}", serializedEvent);
-            DomainEvent event = deserializeDomainEvent(serializedEvent, eventClass);
-            
-            if (event == null) {
-                logger.error("[RedisStreamEventBus] Failed to deserialize event");
-                return;
-            }
-            
-            // Publish to local handlers
-            publishToLocalHandlers(event);
-            
-            // Publish to Spring application event publisher
-            applicationEventPublisher.publishEvent(event);
-            
-            logger.info("[RedisStreamEventBus] Successfully processed event: {}", event.getClass().getName());
+            redisTemplate.opsForStream().add(deadLetterStream, deadLetterEntry);
+            logger.info("[RedisStreamEventBus] Moved message to dead letter queue: ID={}, DeadLetterStream={}", 
+                       message.getId(), deadLetterStream);
         } catch (Exception e) {
-            logger.error("[RedisStreamEventBus] Error processing stream message: {}", e.getMessage(), e);
+            logger.error("[RedisStreamEventBus] Error moving message to dead letter queue: ID={}, Error: {}", 
+                       message.getId(), e.getMessage(), e);
         }
     }
     

@@ -185,6 +185,26 @@ public class EventProperties {
              */
             private long acknowledgeTimeout = 30000;
 
+            /**
+             * Maximum number of retries for failed messages.
+             */
+            private int maxRetries = 3;
+
+            /**
+             * Initial retry delay in milliseconds.
+             */
+            private long initialRetryDelay = 1000;
+
+            /**
+             * Whether to use exponential backoff for retries.
+             */
+            private boolean exponentialBackoff = true;
+
+            /**
+             * Name of the dead letter stream.
+             */
+            private String deadLetterStream = "soda-events-dead-letter";
+
             public boolean isEnabled() {
                 return enabled;
             }
@@ -231,6 +251,38 @@ public class EventProperties {
 
             public void setAcknowledgeTimeout(long acknowledgeTimeout) {
                 this.acknowledgeTimeout = acknowledgeTimeout;
+            }
+
+            public int getMaxRetries() {
+                return maxRetries;
+            }
+
+            public void setMaxRetries(int maxRetries) {
+                this.maxRetries = maxRetries;
+            }
+
+            public long getInitialRetryDelay() {
+                return initialRetryDelay;
+            }
+
+            public void setInitialRetryDelay(long initialRetryDelay) {
+                this.initialRetryDelay = initialRetryDelay;
+            }
+
+            public boolean isExponentialBackoff() {
+                return exponentialBackoff;
+            }
+
+            public void setExponentialBackoff(boolean exponentialBackoff) {
+                this.exponentialBackoff = exponentialBackoff;
+            }
+
+            public String getDeadLetterStream() {
+                return deadLetterStream;
+            }
+
+            public void setDeadLetterStream(String deadLetterStream) {
+                this.deadLetterStream = deadLetterStream;
             }
         }
     }
