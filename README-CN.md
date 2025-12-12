@@ -142,6 +142,13 @@ public class GetUserQueryHandler implements QueryHandler<GetUserQuery, User> {
 | `soda.ddd.cqrs.async.queue-capacity` | 100 | 队列容量 |
 | `soda.ddd.cqrs.async.thread-name-prefix` | "cqrs-async-" | 线程名称前缀 |
 
+### JSON序列化配置
+
+| 属性 | 默认值 | 描述 |
+|------|--------|------|
+| `soda.event.serialization.circular-reference-handler` | `IGNORE` | 循环引用处理策略：`IGNORE`（忽略循环引用）、`ERROR`（抛出错误）、`RETAIN`（保留循环引用） |
+| `soda.event.serialization.fail-on-self-references` | `false` | 序列化时是否在检测到自引用时失败 |
+
 ## 扩展和自定义
 
 - **线程池参数**: 通过 `soda.ddd.cqrs.async.*` 配置覆盖

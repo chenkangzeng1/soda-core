@@ -142,6 +142,13 @@ public class GetUserQueryHandler implements QueryHandler<GetUserQuery, User> {
 | `soda.ddd.cqrs.async.queue-capacity` | 100 | Queue capacity |
 | `soda.ddd.cqrs.async.thread-name-prefix` | "cqrs-async-" | Thread name prefix |
 
+### JSON Serialization Configuration
+
+| Property | Default | Description |
+|----------|---------|-------------|
+| `soda.event.serialization.circular-reference-handler` | `IGNORE` | Circular reference handling strategy: `IGNORE` (ignore circular references), `ERROR` (throw error), `RETAIN` (retain circular references) |
+| `soda.event.serialization.fail-on-self-references` | `false` | Whether to fail on self references during serialization |
+
 ## Extension & Customization
 
 - **Thread pool parameters**: Override via `soda.ddd.cqrs.async.*` configuration.

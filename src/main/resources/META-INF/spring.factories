@@ -1,2 +1,3 @@
 org.springframework.boot.autoconfigure.EnableAutoConfiguration=\
-com.hibuka.soda.core.ScodaDddBusAutoConfiguration
+com.hibuka.soda.core.ScodaDddBusAutoConfiguration,\
+com.hibuka.soda.event.redis.RedisEventBusAutoConfiguration

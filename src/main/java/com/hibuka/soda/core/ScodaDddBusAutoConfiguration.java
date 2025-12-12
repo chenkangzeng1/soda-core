@@ -7,6 +7,7 @@ import com.hibuka.soda.cqrs.handle.EventHandler;
 import com.hibuka.soda.cqrs.handle.QueryBus;
 import com.hibuka.soda.cqrs.handle.QueryHandler;
 import com.hibuka.soda.domain.DomainEvent;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -32,6 +33,13 @@ import java.util.List;
 @Configuration
 @EnableConfigurationProperties({AsyncConfig.class, EventProperties.class})
 public class ScodaDddBusAutoConfiguration {
+    private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(ScodaDddBusAutoConfiguration.class);
+    
+    @Autowired
+    public ScodaDddBusAutoConfiguration(EventProperties eventProperties) {
+        logger.info("[ScodaDddBusAutoConfiguration] Constructor called");
+        logger.info("[ScodaDddBusAutoConfiguration] Bus type: {}", eventProperties.getBusType());
+    }
     /**
      * Creates a CQRS around handler.
      * @param eventBus the event bus
@@ -55,15 +63,18 @@ public class ScodaDddBusAutoConfiguration {
 
     /**
      * Creates a Spring event bus.
+     * Default event bus implementation when no other bus type is specified.
+     *
      * @param applicationEventPublisher Spring's application event publisher
      * @param eventHandlers the event handlers
      * @return the Spring event bus
      */
     @Bean
     @ConditionalOnProperty(name = "soda.event.bus-type", havingValue = "spring", matchIfMissing = true)
-    @Primary
     public EventBus springEventBus(org.springframework.context.ApplicationEventPublisher applicationEventPublisher,
                                  List<EventHandler<? extends DomainEvent>> eventHandlers) {
+        org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(ScodaDddBusAutoConfiguration.class);
+        logger.info("[ScodaDddBusAutoConfiguration] Creating SpringEventBus");
         return new SpringEventBus(applicationEventPublisher, eventHandlers);
     }
 
