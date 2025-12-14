@@ -46,10 +46,8 @@ public class RepositoryEventAspect {
             if (!events.isEmpty()) {
                 agg.clearDomainEvents();
                 
-                // 填充事件上下文信息
                 enrichEventsWithContext(events);
                 
-                // 注册事务同步回调,在事务提交后发布事件
                 if (TransactionSynchronizationManager.isSynchronizationActive()) {
                     log.info("Transaction synchronization is active, registering afterCommit callback for {} events", events.size());
                     TransactionSynchronizationManager.registerSynchronization(
@@ -63,14 +61,12 @@ public class RepositoryEventAspect {
                     );
                 } else {
                     log.info("No transaction synchronization active, publishing {} events immediately", events.size());
-                    // 如果没有事务,立即发布(测试环境或非事务场景)
                     publishEvents(events);
                 }
             }
         }
         return result;
     }
-
     
     private void enrichEventsWithContext(List<AbstractDomainEvent> events) {
         CommandContext ctx = CommandContextHolder.getContext();
@@ -78,13 +74,11 @@ public class RepositoryEventAspect {
             events.forEach(e -> {
                 e.setRequestId(ctx.getRequestId());
                 e.setJti(ctx.getJti());
-                // 修复类型不匹配：String[] 转 String
                 String[] authoritiesArray = ctx.getAuthorities();
                 if (authoritiesArray != null) {
                     e.setAuthorities(String.join(",", authoritiesArray));
                 }
                 e.setUserName(ctx.getUserName());
-                // 修复类型不匹配：String 转 Long
                 String callerUidStr = ctx.getCallerUid();
                 if (callerUidStr != null && !callerUidStr.isEmpty()) {
                     try {
@@ -105,7 +99,6 @@ public class RepositoryEventAspect {
                 log.info("Publishing event: eventId={}, eventType={}", event.getEventId(), event.getEventType());
                 eventBus.publish(event);
             } catch (Exception e) {
-                // 记录日志,便于排查问题
                 log.error("Failed to publish domain event: {}", event, e);
             }
         }

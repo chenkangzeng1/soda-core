@@ -1,2 +1,3 @@
 com.hibuka.soda.bus.configuration.SpringBusAutoConfiguration
 com.hibuka.soda.bus.configuration.SimpleEventBusAutoConfiguration
+com.hibuka.soda.event.spring.RepositoryEventAutoConfiguration

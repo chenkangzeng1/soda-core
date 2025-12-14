@@ -10,7 +10,6 @@
     
     <modules>
         <module>soda-core-base</module>
-        <module>soda-event-spring</module>
         <module>soda-event-redis</module>
     </modules>
     <name>soda-core</name>
