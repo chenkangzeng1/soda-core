@@ -70,6 +70,7 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
     private final long initialRetryDelay;
     private final boolean exponentialBackoff;
     private final EventProperties.RedisProperties.StreamProperties.IdempotencyProperties idempotencyProperties;
+    private final List<EventHandler<? extends DomainEvent>> eventHandlers;
     
     private final Map<Class<? extends DomainEvent>, List<EventHandler>> handlers = new ConcurrentHashMap<>();
     private final Map<String, Class<? extends DomainEvent>> eventTypeToClassMap = new ConcurrentHashMap<>();
@@ -81,63 +82,32 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
     private final AtomicBoolean initialized = new AtomicBoolean(false);
 
     /**
-     * Constructor for RedisStreamEventBus.
+     * Private constructor for RedisStreamEventBus, used by Builder.
      *
-     * @param redisTemplate Redis template for Stream operations
-     * @param applicationEventPublisher Spring's application event publisher
-     * @param redisConnectionFactory Redis connection factory
-     * @param eventHandlers List of event handlers to register
-     * @param topicName Stream key name for event publishing
-     * @param groupName Consumer group name
-     * @param consumerName Consumer name
-     * @param maxlen Maximum stream length
-     * @param pollTimeout Poll timeout in milliseconds
-     * @param batchSize Batch size for pulling messages
-     * @param concurrency Number of concurrent consumers
-     * @param maxRetries Maximum number of retries
-     * @param initialRetryDelay Initial retry delay in milliseconds
-     * @param exponentialBackoff Whether to use exponential backoff
-     * @param deadLetterStream Name of the dead letter stream
-     * @param idempotencyProperties Idempotency configuration properties
-     * @param objectMapper Optimized ObjectMapper for serialization/deserialization
+     * @param builder the builder containing all configuration
      */
-    public RedisStreamEventBus(RedisTemplate<String, Object> redisTemplate,
-                              ApplicationEventPublisher applicationEventPublisher,
-                              RedisConnectionFactory redisConnectionFactory,
-                              List<EventHandler<? extends DomainEvent>> eventHandlers,
-                              String topicName,
-                              String groupName,
-                              String consumerName,
-                              long maxlen,
-                              long pollTimeout,
-                              int batchSize,
-                              int concurrency,
-                              int maxRetries,
-                              long initialRetryDelay,
-                              boolean exponentialBackoff,
-                              String deadLetterStream,
-                              EventProperties.RedisProperties.StreamProperties.IdempotencyProperties idempotencyProperties,
-                              ObjectMapper objectMapper) {
+    private RedisStreamEventBus(Builder builder) {
         logger.info("[RedisStreamEventBus] Constructor called, instance: {}", this.hashCode());
-        this.redisTemplate = redisTemplate;
-        this.streamRedisTemplate = new StringRedisTemplate(redisConnectionFactory);
-        this.applicationEventPublisher = applicationEventPublisher;
-        this.redisConnectionFactory = redisConnectionFactory;
-        this.streamKey = topicName;
-        this.groupName = groupName;
-        this.consumerName = consumerName;
-        this.maxlen = maxlen;
-        this.pollTimeout = pollTimeout;
-        this.batchSize = batchSize;
-        this.concurrency = concurrency;
-        this.maxRetries = maxRetries;
-        this.initialRetryDelay = initialRetryDelay;
-        this.exponentialBackoff = exponentialBackoff;
-        this.deadLetterStream = deadLetterStream;
-        this.idempotencyProperties = idempotencyProperties;
+        this.redisTemplate = builder.redisTemplate;
+        this.streamRedisTemplate = new StringRedisTemplate(builder.redisConnectionFactory);
+        this.applicationEventPublisher = builder.applicationEventPublisher;
+        this.redisConnectionFactory = builder.redisConnectionFactory;
+        this.streamKey = builder.streamKey;
+        this.groupName = builder.groupName;
+        this.consumerName = builder.consumerName;
+        this.maxlen = builder.maxlen;
+        this.pollTimeout = builder.pollTimeout;
+        this.batchSize = builder.batchSize;
+        this.concurrency = builder.concurrency;
+        this.maxRetries = builder.maxRetries;
+        this.initialRetryDelay = builder.initialRetryDelay;
+        this.exponentialBackoff = builder.exponentialBackoff;
+        this.deadLetterStream = builder.deadLetterStream;
+        this.idempotencyProperties = builder.idempotencyProperties;
+        this.eventHandlers = builder.eventHandlers;
         
         // Use the optimized shared ObjectMapper
-        this.objectMapper = objectMapper;
+        this.objectMapper = builder.objectMapper;
         
         // Initialize idempotency service
         this.idempotencyService = new RedisIdempotencyServiceImpl(redisTemplate, idempotencyProperties);
@@ -146,6 +116,187 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
         logger.info("[RedisStreamEventBus] Registering {} event handlers, instance: {}", eventHandlers.size(), this.hashCode());
         registerEventHandlers(eventHandlers);
         logger.info("[RedisStreamEventBus] Constructor completed, instance: {}", this.hashCode());
+    }
+
+    /**
+     * Builder class for RedisStreamEventBus.
+     * Provides a fluent API for creating RedisStreamEventBus instances.
+     */
+    public static class Builder {
+        // Required parameters
+        private final RedisTemplate<String, Object> redisTemplate;
+        private final ApplicationEventPublisher applicationEventPublisher;
+        private final RedisConnectionFactory redisConnectionFactory;
+        private final List<EventHandler<? extends DomainEvent>> eventHandlers;
+        private final String streamKey;
+        private final ObjectMapper objectMapper;
+        
+        // Optional parameters with default values
+        private String groupName = "soda-event-group";
+        private String consumerName = "soda-event-consumer";
+        private long maxlen = 10000;
+        private long pollTimeout = 100;
+        private int batchSize = 10;
+        private int concurrency = 2;
+        private int maxRetries = 3;
+        private long initialRetryDelay = 1000;
+        private boolean exponentialBackoff = true;
+        private String deadLetterStream = "soda-dead-letter-stream";
+        private EventProperties.RedisProperties.StreamProperties.IdempotencyProperties idempotencyProperties;
+        
+        /**
+         * Constructor for Builder with required parameters.
+         *
+         * @param redisTemplate Redis template for Stream operations
+         * @param applicationEventPublisher Spring's application event publisher
+         * @param redisConnectionFactory Redis connection factory
+         * @param eventHandlers List of event handlers to register
+         * @param streamKey Stream key name for event publishing
+         * @param objectMapper Optimized ObjectMapper for serialization/deserialization
+         */
+        public Builder(RedisTemplate<String, Object> redisTemplate,
+                      ApplicationEventPublisher applicationEventPublisher,
+                      RedisConnectionFactory redisConnectionFactory,
+                      List<EventHandler<? extends DomainEvent>> eventHandlers,
+                      String streamKey,
+                      ObjectMapper objectMapper) {
+            this.redisTemplate = redisTemplate;
+            this.applicationEventPublisher = applicationEventPublisher;
+            this.redisConnectionFactory = redisConnectionFactory;
+            this.eventHandlers = eventHandlers;
+            this.streamKey = streamKey;
+            this.objectMapper = objectMapper;
+        }
+        
+        /**
+         * Sets the consumer group name.
+         *
+         * @param groupName Consumer group name
+         * @return this Builder for method chaining
+         */
+        public Builder groupName(String groupName) {
+            this.groupName = groupName;
+            return this;
+        }
+        
+        /**
+         * Sets the consumer name.
+         *
+         * @param consumerName Consumer name
+         * @return this Builder for method chaining
+         */
+        public Builder consumerName(String consumerName) {
+            this.consumerName = consumerName;
+            return this;
+        }
+        
+        /**
+         * Sets the maximum stream length.
+         *
+         * @param maxlen Maximum stream length
+         * @return this Builder for method chaining
+         */
+        public Builder maxlen(long maxlen) {
+            this.maxlen = maxlen;
+            return this;
+        }
+        
+        /**
+         * Sets the poll timeout in milliseconds.
+         *
+         * @param pollTimeout Poll timeout in milliseconds
+         * @return this Builder for method chaining
+         */
+        public Builder pollTimeout(long pollTimeout) {
+            this.pollTimeout = pollTimeout;
+            return this;
+        }
+        
+        /**
+         * Sets the batch size for pulling messages.
+         *
+         * @param batchSize Batch size for pulling messages
+         * @return this Builder for method chaining
+         */
+        public Builder batchSize(int batchSize) {
+            this.batchSize = batchSize;
+            return this;
+        }
+        
+        /**
+         * Sets the number of concurrent consumers.
+         *
+         * @param concurrency Number of concurrent consumers
+         * @return this Builder for method chaining
+         */
+        public Builder concurrency(int concurrency) {
+            this.concurrency = concurrency;
+            return this;
+        }
+        
+        /**
+         * Sets the maximum number of retries.
+         *
+         * @param maxRetries Maximum number of retries
+         * @return this Builder for method chaining
+         */
+        public Builder maxRetries(int maxRetries) {
+            this.maxRetries = maxRetries;
+            return this;
+        }
+        
+        /**
+         * Sets the initial retry delay in milliseconds.
+         *
+         * @param initialRetryDelay Initial retry delay in milliseconds
+         * @return this Builder for method chaining
+         */
+        public Builder initialRetryDelay(long initialRetryDelay) {
+            this.initialRetryDelay = initialRetryDelay;
+            return this;
+        }
+        
+        /**
+         * Sets whether to use exponential backoff.
+         *
+         * @param exponentialBackoff Whether to use exponential backoff
+         * @return this Builder for method chaining
+         */
+        public Builder exponentialBackoff(boolean exponentialBackoff) {
+            this.exponentialBackoff = exponentialBackoff;
+            return this;
+        }
+        
+        /**
+         * Sets the name of the dead letter stream.
+         *
+         * @param deadLetterStream Name of the dead letter stream
+         * @return this Builder for method chaining
+         */
+        public Builder deadLetterStream(String deadLetterStream) {
+            this.deadLetterStream = deadLetterStream;
+            return this;
+        }
+        
+        /**
+         * Sets the idempotency properties.
+         *
+         * @param idempotencyProperties Idempotency configuration properties
+         * @return this Builder for method chaining
+         */
+        public Builder idempotencyProperties(EventProperties.RedisProperties.StreamProperties.IdempotencyProperties idempotencyProperties) {
+            this.idempotencyProperties = idempotencyProperties;
+            return this;
+        }
+        
+        /**
+         * Builds and returns a new RedisStreamEventBus instance.
+         *
+         * @return a new RedisStreamEventBus instance
+         */
+        public RedisStreamEventBus build() {
+            return new RedisStreamEventBus(this);
+        }
     }
     
     /**

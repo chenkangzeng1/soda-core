@@ -103,7 +103,6 @@ public class RedisEventBusAutoConfiguration {
     @ConditionalOnBean(RedisConnectionFactory.class)
     public RedisTemplate<String, Object> sodaRedisEventBusTemplate(RedisConnectionFactory redisConnectionFactory) {
         logger.info("[RedisEventBusAutoConfiguration] Creating sodaRedisEventBusTemplate");
-        ObjectMapper sodaEventObjectMapper = createSodaEventObjectMapper();
         RedisTemplate<String, Object> template = new RedisTemplate<>();
         template.setConnectionFactory(redisConnectionFactory);
         template.setKeySerializer(new StringRedisSerializer());
@@ -155,25 +154,26 @@ public class RedisEventBusAutoConfiguration {
         logger.info("[RedisEventBusAutoConfiguration] Redis Stream configuration: topic={}, group={}, consumer={}, maxlen={}, pollTimeout={}, batchSize={}, concurrency={}, maxRetries={}, initialRetryDelay={}, exponentialBackoff={}, deadLetterStream={}",
                    topicName, groupName, consumerName, maxlen, pollTimeout, batchSize, concurrency, maxRetries, initialRetryDelay, exponentialBackoff, deadLetterStream);
         
-        RedisStreamEventBus redisStreamEventBus = new RedisStreamEventBus(
+        RedisStreamEventBus redisStreamEventBus = new RedisStreamEventBus.Builder(
             sodaRedisEventBusTemplate,
             applicationEventPublisher,
             redisConnectionFactory,
             eventHandlers,
             topicName,
-            groupName,
-            consumerName,
-            maxlen,
-            pollTimeout,
-            batchSize,
-            concurrency,
-            maxRetries,
-            initialRetryDelay,
-            exponentialBackoff,
-            deadLetterStream,
-            eventProperties.getRedis().getStream().getIdempotency(),
             createSodaEventObjectMapper()
-        );
+        )
+        .groupName(groupName)
+        .consumerName(consumerName)
+        .maxlen(maxlen)
+        .pollTimeout(pollTimeout)
+        .batchSize(batchSize)
+        .concurrency(concurrency)
+        .maxRetries(maxRetries)
+        .initialRetryDelay(initialRetryDelay)
+        .exponentialBackoff(exponentialBackoff)
+        .deadLetterStream(deadLetterStream)
+        .idempotencyProperties(eventProperties.getRedis().getStream().getIdempotency())
+        .build();
         
         logger.info("[RedisEventBusAutoConfiguration] Created RedisStreamEventBus (Stream mode)");
         return redisStreamEventBus;
