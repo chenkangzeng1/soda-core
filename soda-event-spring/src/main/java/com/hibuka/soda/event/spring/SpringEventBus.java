@@ -6,7 +6,6 @@ import com.hibuka.soda.cqrs.event.EventHandler;
 import com.hibuka.soda.domain.event.DomainEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.core.GenericTypeResolver;
 import org.springframework.stereotype.Component;

@@ -1,1 +1,2 @@
 com.hibuka.soda.bus.configuration.SpringBusAutoConfiguration
+com.hibuka.soda.bus.configuration.SimpleEventBusAutoConfiguration

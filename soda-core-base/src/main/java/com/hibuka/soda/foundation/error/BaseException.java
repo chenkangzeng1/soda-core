@@ -4,7 +4,6 @@ import java.io.Serial;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Objects;
 
 /**
  * Base exception class that implements the IErrorCode interface, representing a unified exception with error code, message, and error data.
