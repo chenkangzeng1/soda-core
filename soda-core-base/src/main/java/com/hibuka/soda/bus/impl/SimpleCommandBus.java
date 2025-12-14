@@ -48,18 +48,6 @@ public class SimpleCommandBus implements CommandBus {
             }
         }
         logger.info("[SimpleCommandBus] Registered {} command handlers", handlers.size());
-        if (this.eventProperties != null) {
-            boolean streamEnabled = this.eventProperties.getRedis() != null
-                    && this.eventProperties.getRedis().getStream() != null
-                    && this.eventProperties.getRedis().getStream().isEnabled();
-            logger.info("[SimpleCommandBus] Event bus type: {}, stream.enabled: {}", 
-                    this.eventProperties.getBusType(), streamEnabled);
-            if (streamEnabled) {
-                logger.info("[SimpleCommandBus] Stream mode enabled: will rely on EventBus for async dispatch; no local sync dispatch in command bus");
-            }
-        } else {
-            logger.info("[SimpleCommandBus] EventProperties not available for logging");
-        }
     }
 
     @Override

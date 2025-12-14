@@ -145,11 +145,9 @@ public class CqrsAroundHandler {
     private boolean isStreamEnabled() {
         try {
             return eventProperties != null
-                    && eventProperties.getRedis() != null
-                    && eventProperties.getRedis().getStream() != null
-                    && eventProperties.getRedis().getStream().isEnabled();
+                    && "redis".equals(eventProperties.getBusType());
         } catch (Exception e) {
-            logger.warn("[CqrsAroundHandler] Failed to read stream.enabled from EventProperties, defaulting to false: {}", e.getMessage());
+            logger.warn("[CqrsAroundHandler] Failed to read bus type from EventProperties, defaulting to false: {}", e.getMessage());
             return false;
         }
     }

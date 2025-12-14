@@ -171,11 +171,6 @@ public class EventProperties {
              */
             public static class StreamProperties {
                 /**
-                 * Whether to enable Redis Stream mode.
-                 */
-                private boolean enabled = false;
-
-                /**
                  * Consumer group name.
                  */
                 @NotBlank(message = "Consumer group name cannot be blank")
@@ -260,14 +255,6 @@ public class EventProperties {
 
             public void setBatchSize(int batchSize) {
                 this.batchSize = batchSize;
-            }
-
-            public boolean isEnabled() {
-                return enabled;
-            }
-            
-            public void setEnabled(boolean enabled) {
-                this.enabled = enabled;
             }
             
             public IdempotencyProperties getIdempotency() {

@@ -3,6 +3,8 @@ package com.hibuka.soda.event.spring;
 import com.hibuka.soda.cqrs.event.EventBus;
 import com.hibuka.soda.cqrs.event.EventHandler;
 import com.hibuka.soda.domain.event.DomainEvent;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
@@ -21,11 +23,13 @@ import java.util.List;
 @Configuration
 @ConditionalOnProperty(name = "soda.event.bus-type", havingValue = "spring")
 public class SpringEventBusAutoConfiguration {
-    
+    private static final Logger logger = LoggerFactory.getLogger(SpringEventBusAutoConfiguration.class);
+
     @Bean
     @Primary
     public EventBus springEventBus(ApplicationEventPublisher applicationEventPublisher,
-                                  List<EventHandler<? extends DomainEvent>> eventHandlers) {
+                                   List<EventHandler<? extends DomainEvent>> eventHandlers) {
+        logger.info("[SpringEventBusAutoConfiguration] Initialized with {} event handlers", eventHandlers.size());
         return new SpringEventBus(applicationEventPublisher, eventHandlers);
     }
 }

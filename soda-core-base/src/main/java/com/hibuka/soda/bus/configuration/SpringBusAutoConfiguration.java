@@ -57,7 +57,7 @@ public class SpringBusAutoConfiguration {
         
         // 配置拒绝策略，避免任务丢失
         executor.setRejectedExecutionHandler((r, executor1) -> {
-            logger.warn("[SpringBusAutoConfiguration] Thread pool is full, rejecting task: {}", r.getClass().getName());
+            logger.warn("[BusAutoConfiguration] Thread pool is full, rejecting task: {}", r.getClass().getName());
             // 可以根据实际需求调整拒绝策略，比如记录日志、发送告警等
             // 这里使用CallerRunsPolicy的思路，但增加了日志记录
             if (!executor1.isShutdown()) {
@@ -65,7 +65,7 @@ public class SpringBusAutoConfiguration {
                     // 在调用者线程执行任务，避免任务丢失
                     r.run();
                 } catch (Exception e) {
-                    logger.error("[SpringBusAutoConfiguration] Error executing task in caller thread: {}", e.getMessage(), e);
+                    logger.error("[BusAutoConfiguration] Error executing task in caller thread: {}", e.getMessage(), e);
                 }
             }
         });
@@ -77,7 +77,7 @@ public class SpringBusAutoConfiguration {
         // 配置线程池指标收集
         executor.initialize();
         
-        logger.info("[SpringBusAutoConfiguration] cqrsAsyncExecutor initialized: corePoolSize={}, maxPoolSize={}, queueCapacity={}, threadNamePrefix={}",
+        logger.info("[BusAutoConfiguration] cqrsAsyncExecutor initialized: corePoolSize={}, maxPoolSize={}, queueCapacity={}, threadNamePrefix={}",
                 executor.getCorePoolSize(), executor.getMaxPoolSize(), executor.getQueueCapacity(), executor.getThreadNamePrefix());
         
         return executor;

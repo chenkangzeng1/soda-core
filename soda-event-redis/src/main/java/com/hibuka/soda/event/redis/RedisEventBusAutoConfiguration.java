@@ -132,7 +132,6 @@ public class RedisEventBusAutoConfiguration {
     @Bean
     @Primary
     @ConditionalOnBean(RedisConnectionFactory.class)
-    @ConditionalOnProperty(name = "soda.event.redis.stream.enabled", havingValue = "true", matchIfMissing = true)
     public EventBus redisStreamEventBus(@Qualifier("sodaRedisEventBusTemplate") RedisTemplate<String, Object> sodaRedisEventBusTemplate,
                                        ApplicationEventPublisher applicationEventPublisher,
                                        RedisConnectionFactory redisConnectionFactory,
