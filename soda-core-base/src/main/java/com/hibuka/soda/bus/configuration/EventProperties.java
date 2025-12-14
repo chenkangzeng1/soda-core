@@ -188,6 +188,18 @@ public class EventProperties {
                 private String consumerName = "soda-events-consumer-" + System.getProperty("server.port", "0");
 
                 /**
+                 * Number of concurrent consumers.
+                 */
+                @Positive(message = "Concurrency must be positive")
+                private int concurrency = 1;
+
+                /**
+                 * Batch size for pulling messages from Redis Stream.
+                 */
+                @Positive(message = "Batch size must be positive")
+                private int batchSize = 10;
+
+                /**
                  * Maximum length of the Stream.
                  */
                 @Positive(message = "Stream maximum length must be positive")
@@ -233,6 +245,22 @@ public class EventProperties {
                  */
                 @NotNull(message = "Idempotency configuration cannot be null")
                 private IdempotencyProperties idempotency = new IdempotencyProperties();
+
+            public int getConcurrency() {
+                return concurrency;
+            }
+
+            public void setConcurrency(int concurrency) {
+                this.concurrency = concurrency;
+            }
+
+            public int getBatchSize() {
+                return batchSize;
+            }
+
+            public void setBatchSize(int batchSize) {
+                this.batchSize = batchSize;
+            }
 
             public boolean isEnabled() {
                 return enabled;

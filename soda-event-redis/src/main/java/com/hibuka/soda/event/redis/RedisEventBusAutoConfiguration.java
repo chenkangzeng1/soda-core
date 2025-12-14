@@ -20,10 +20,9 @@ import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.databind.jsontype.impl.LaissezFaireSubTypeValidator;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.slf4j.Logger;
-import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
@@ -69,9 +68,9 @@ public class RedisEventBusAutoConfiguration {
         objectMapper.configure(SerializationFeature.INDENT_OUTPUT, false);
         objectMapper.configure(SerializationFeature.CLOSE_CLOSEABLE, false);
         objectMapper.configure(SerializationFeature.FLUSH_AFTER_WRITE_VALUE, false);
-        objectMapper.configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
-        objectMapper.configure(com.fasterxml.jackson.databind.DeserializationFeature.ACCEPT_SINGLE_VALUE_AS_ARRAY, true);
-        objectMapper.configure(com.fasterxml.jackson.databind.DeserializationFeature.READ_ENUMS_USING_TO_STRING, true);
+        objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+        objectMapper.configure(DeserializationFeature.ACCEPT_SINGLE_VALUE_AS_ARRAY, true);
+        objectMapper.configure(DeserializationFeature.READ_ENUMS_USING_TO_STRING, true);
         
         // Ensure polymorphism is handled for AbstractDomainEvent subclasses
         // This is crucial for deserializing events like ProducerEvent when the type is AbstractDomainEvent
@@ -146,13 +145,15 @@ public class RedisEventBusAutoConfiguration {
         String consumerName = eventProperties.getRedis().getStream().getConsumerName();
         long maxlen = eventProperties.getRedis().getStream().getMaxlen();
         long pollTimeout = eventProperties.getRedis().getStream().getPollTimeout();
+        int batchSize = eventProperties.getRedis().getStream().getBatchSize();
+        int concurrency = eventProperties.getRedis().getStream().getConcurrency();
         int maxRetries = eventProperties.getRedis().getStream().getMaxRetries();
         long initialRetryDelay = eventProperties.getRedis().getStream().getInitialRetryDelay();
         boolean exponentialBackoff = eventProperties.getRedis().getStream().isExponentialBackoff();
         String deadLetterStream = eventProperties.getRedis().getStream().getDeadLetterStream();
         
-        logger.info("[RedisEventBusAutoConfiguration] Redis Stream configuration: topic={}, group={}, consumer={}, maxlen={}, pollTimeout={}, maxRetries={}, initialRetryDelay={}, exponentialBackoff={}, deadLetterStream={}",
-                   topicName, groupName, consumerName, maxlen, pollTimeout, maxRetries, initialRetryDelay, exponentialBackoff, deadLetterStream);
+        logger.info("[RedisEventBusAutoConfiguration] Redis Stream configuration: topic={}, group={}, consumer={}, maxlen={}, pollTimeout={}, batchSize={}, concurrency={}, maxRetries={}, initialRetryDelay={}, exponentialBackoff={}, deadLetterStream={}",
+                   topicName, groupName, consumerName, maxlen, pollTimeout, batchSize, concurrency, maxRetries, initialRetryDelay, exponentialBackoff, deadLetterStream);
         
         RedisStreamEventBus redisStreamEventBus = new RedisStreamEventBus(
             sodaRedisEventBusTemplate,
@@ -164,6 +165,8 @@ public class RedisEventBusAutoConfiguration {
             consumerName,
             maxlen,
             pollTimeout,
+            batchSize,
+            concurrency,
             maxRetries,
             initialRetryDelay,
             exponentialBackoff,
@@ -184,7 +187,7 @@ public class RedisEventBusAutoConfiguration {
     private void configureCircularReferenceHandling(ObjectMapper objectMapper) {
         // Set fail on self references based on properties
         objectMapper.configure(
-            com.fasterxml.jackson.databind.SerializationFeature.FAIL_ON_SELF_REFERENCES,
+            SerializationFeature.FAIL_ON_SELF_REFERENCES,
             eventProperties.getSerialization().isFailOnSelfReferences()
         );
         
@@ -193,14 +196,14 @@ public class RedisEventBusAutoConfiguration {
             case IGNORE:
                 // Ignore circular references by not including them in serialization
                 objectMapper.configure(
-                    com.fasterxml.jackson.databind.SerializationFeature.WRITE_SELF_REFERENCES_AS_NULL,
+                    SerializationFeature.WRITE_SELF_REFERENCES_AS_NULL,
                     true
                 );
                 break;
             case ERROR:
                 // Throw error when circular references are detected
                 objectMapper.configure(
-                    com.fasterxml.jackson.databind.SerializationFeature.FAIL_ON_SELF_REFERENCES,
+                    SerializationFeature.FAIL_ON_SELF_REFERENCES,
                     true
                 );
                 break;
@@ -211,7 +214,7 @@ public class RedisEventBusAutoConfiguration {
             default:
                 // Default to ignore
                 objectMapper.configure(
-                    com.fasterxml.jackson.databind.SerializationFeature.WRITE_SELF_REFERENCES_AS_NULL,
+                    SerializationFeature.WRITE_SELF_REFERENCES_AS_NULL,
                     true
                 );
         }

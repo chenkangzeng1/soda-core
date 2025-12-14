@@ -1,10 +1,15 @@
 package com.hibuka.soda.event.redis;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.exc.InvalidDefinitionException;
 import com.hibuka.soda.bus.configuration.EventProperties;
 import com.hibuka.soda.cqrs.event.EventBus;
 import com.hibuka.soda.cqrs.event.EventHandler;
 import com.hibuka.soda.domain.event.DomainEvent;
+import com.hibuka.soda.context.CommandContext;
+import com.hibuka.soda.context.CommandContextHolder;
 import com.hibuka.soda.event.redis.service.IdempotencyService;
 import com.hibuka.soda.event.redis.service.impl.RedisIdempotencyServiceImpl;
 import com.hibuka.soda.foundation.error.BaseErrorCode;
@@ -28,6 +33,8 @@ import org.springframework.data.redis.stream.StreamListener;
 import org.springframework.data.redis.stream.StreamMessageListenerContainer;
 import org.springframework.data.redis.stream.Subscription;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Duration;
 import java.util.HashMap;
@@ -56,6 +63,8 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
     private final String consumerName;
     private final long maxlen;
     private final long pollTimeout;
+    private final int batchSize;
+    private final int concurrency;
     private final String deadLetterStream;
     private final int maxRetries;
     private final long initialRetryDelay;
@@ -68,7 +77,7 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
     private final IdempotencyService idempotencyService;
     
     private StreamMessageListenerContainer<?, ?> container;
-    private Subscription subscription;
+    private final List<Subscription> subscriptions = new CopyOnWriteArrayList<>();
     private final AtomicBoolean initialized = new AtomicBoolean(false);
 
     /**
@@ -83,6 +92,8 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
      * @param consumerName Consumer name
      * @param maxlen Maximum stream length
      * @param pollTimeout Poll timeout in milliseconds
+     * @param batchSize Batch size for pulling messages
+     * @param concurrency Number of concurrent consumers
      * @param maxRetries Maximum number of retries
      * @param initialRetryDelay Initial retry delay in milliseconds
      * @param exponentialBackoff Whether to use exponential backoff
@@ -99,6 +110,8 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
                               String consumerName,
                               long maxlen,
                               long pollTimeout,
+                              int batchSize,
+                              int concurrency,
                               int maxRetries,
                               long initialRetryDelay,
                               boolean exponentialBackoff,
@@ -115,6 +128,8 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
         this.consumerName = consumerName;
         this.maxlen = maxlen;
         this.pollTimeout = pollTimeout;
+        this.batchSize = batchSize;
+        this.concurrency = concurrency;
         this.maxRetries = maxRetries;
         this.initialRetryDelay = initialRetryDelay;
         this.exponentialBackoff = exponentialBackoff;
@@ -213,6 +228,7 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
         StreamMessageListenerContainer.StreamMessageListenerContainerOptions options = 
                 StreamMessageListenerContainer.StreamMessageListenerContainerOptions.builder()
                         .pollTimeout(Duration.ofMillis(pollTimeout))
+                        .batchSize(batchSize)
                         .keySerializer(new StringRedisSerializer()) // For Stream Key
                         .hashKeySerializer(new StringRedisSerializer()) // For Map Keys
                         .hashValueSerializer(new StringRedisSerializer()) // For Map Values (read as JSON String)
@@ -228,11 +244,6 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
         StreamMessageListenerContainer container = StreamMessageListenerContainer.create(redisConnectionFactory, options);
         this.container = container;
         
-        // Create subscription for the consumer group
-        ReadOffset offset = ReadOffset.lastConsumed();
-        Consumer consumer = Consumer.from(groupName, consumerName);
-        StreamOffset<String> streamOffset = StreamOffset.create(streamKey, offset);
-        
         // Create stream listener that handles raw MapRecord with explicit type
         StreamListener<String, MapRecord<String, String, String>> listener = new StreamListener<>() {
             @Override
@@ -246,14 +257,25 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
             }
         };
         
-        // Use manual ACK by calling receive() instead of receiveAutoAck()
-        @SuppressWarnings({"rawtypes", "unchecked"})
-        Subscription subscription = container.receive(consumer, streamOffset, listener);
-        this.subscription = subscription;
+        // Start concurrency loop to create multiple consumers
+        ReadOffset offset = ReadOffset.lastConsumed();
+        StreamOffset<String> streamOffset = StreamOffset.create(streamKey, offset);
+        
+        for (int i = 0; i < concurrency; i++) {
+            String currentConsumerName = concurrency > 1 ? consumerName + "-" + i : consumerName;
+            Consumer consumer = Consumer.from(groupName, currentConsumerName);
+            
+            // Use manual ACK by calling receive() instead of receiveAutoAck()
+            @SuppressWarnings({"rawtypes", "unchecked"})
+            Subscription sub = container.receive(consumer, streamOffset, listener);
+            this.subscriptions.add(sub);
+            logger.info("[RedisStreamEventBus] Created consumer subscription: {}", currentConsumerName);
+        }
         
         // Start the container
         container.start();
-        logger.info("[RedisStreamEventBus] Stream listener container started with options: pollTimeout={}", pollTimeout);
+        logger.info("[RedisStreamEventBus] Stream listener container started with options: pollTimeout={}, batchSize={}, concurrency={}", 
+                   pollTimeout, batchSize, concurrency);
     }
     
     /**
@@ -377,14 +399,14 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
             
             // Create a simple ObjectMapper for parsing
             ObjectMapper mapper = new ObjectMapper();
-            mapper.configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+            mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
             
             try {
                 // Parse the JSON to get eventId directly
-                com.fasterxml.jackson.databind.JsonNode rootNode = mapper.readTree(serializedEvent);
+                JsonNode rootNode = mapper.readTree(serializedEvent);
                 
                 // Handle both array format [eventType, eventData] and direct object format
-                com.fasterxml.jackson.databind.JsonNode eventDataNode = rootNode;
+                JsonNode eventDataNode = rootNode;
                 if (rootNode.isArray() && rootNode.size() >= 2) {
                     // Format is [eventType, eventData]
                     logger.debug("[RedisStreamEventBus] Handling array format: [eventType, eventData]");
@@ -394,7 +416,7 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
                 // Extract eventId from eventData
                 if (eventDataNode.isObject()) {
                     logger.debug("[RedisStreamEventBus] Event data is object, extracting eventId");
-                    com.fasterxml.jackson.databind.JsonNode eventIdNode = eventDataNode.get("eventId");
+                    JsonNode eventIdNode = eventDataNode.get("eventId");
                     if (eventIdNode != null && eventIdNode.isTextual()) {
                         String eventId = eventIdNode.asText();
                         logger.info("[RedisStreamEventBus] Successfully extracted eventId from message: {}", eventId);
@@ -472,62 +494,79 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
      * @throws Exception if an error occurs during processing
      */
     private boolean handleStreamMessageInternal(MapRecord<String, String, String> message) throws Exception {
-        // Get the serialized event and type from the message
-        String serializedEvent = message.getValue().get("event");
-        String eventType = message.getValue().get("type");
-        
-        if (serializedEvent == null) {
-            logger.error("[RedisStreamEventBus] Missing 'event' field in stream message");
-            return false;
-        }
-        
-        if (eventType == null) {
-            logger.error("[RedisStreamEventBus] Missing 'type' field in stream message");
-            return false;
-        }
-        
-        // Get the event class from the type map
-        Class<? extends DomainEvent> eventClass = eventTypeToClassMap.get(eventType);
-        
-        // Fallback: handle quoted event types (e.g., when RedisTemplate adds quotes)
-        if (eventClass == null) {
-            // Try removing quotes if present
-            String unquotedEventType = eventType;
-            if ((eventType.startsWith("\"") && eventType.endsWith("\"")) || 
-                (eventType.startsWith("'")) && eventType.endsWith("'")) {
-                unquotedEventType = eventType.substring(1, eventType.length() - 1);
-                logger.debug("[RedisStreamEventBus] Trying unquoted event type: {}", unquotedEventType);
-                eventClass = eventTypeToClassMap.get(unquotedEventType);
+        // Deserialize context
+        String contextJson = message.getValue().get("context");
+        if (contextJson != null) {
+            try {
+                CommandContext context = objectMapper.readValue(contextJson, CommandContext.class);
+                CommandContextHolder.setContext(context);
+            } catch (Exception e) {
+                logger.warn("[RedisStreamEventBus] Failed to deserialize context", e);
             }
         }
-        
-        if (eventClass == null) {
-            logger.error("[RedisStreamEventBus] No registered handler for event type: {}", eventType);
-            return false;
-        }
-        List<EventHandler> localHandlers = handlers.get(eventClass);
-        int handlerCount = localHandlers == null ? 0 : localHandlers.size();
-        logger.info("[RedisStreamEventBus] Resolved event class: {}, handlers registered: {}", eventClass.getName(), handlerCount);
-        
-        // Deserialize the event from JSON string using the comprehensive deserializeDomainEvent method
-        logger.debug("[RedisStreamEventBus] Deserializing event from JSON: {}", serializedEvent);
-        
-        DomainEvent event = deserializeDomainEvent(serializedEvent, eventClass);
-        
-        if (event != null) {
-            // Publish to local handlers - this ensures idempotency checks are applied
-            publishToLocalHandlers(event);
+
+        try {
+            // Get the serialized event and type from the message
+            String serializedEvent = message.getValue().get("event");
+            String eventType = message.getValue().get("type");
             
-            // Do NOT publish to Spring application event publisher to avoid duplicate processing
-            // applicationEventPublisher.publishEvent(event); // Removed to avoid duplicate processing
+            if (serializedEvent == null) {
+                logger.error("[RedisStreamEventBus] Missing 'event' field in stream message");
+                return false;
+            }
             
-            logger.info("[RedisStreamEventBus] Successfully processed event: {}", event.getClass().getName());
-        } else {
-            // This is expected behavior if the event has been handled locally
-            logger.info("[RedisStreamEventBus] Event deserialization returned null, which is expected for domain events handled locally. Acknowledging message.");
+            if (eventType == null) {
+                logger.error("[RedisStreamEventBus] Missing 'type' field in stream message");
+                return false;
+            }
+            
+            // Get the event class from the type map
+            Class<? extends DomainEvent> eventClass = eventTypeToClassMap.get(eventType);
+            
+            // Fallback: handle quoted event types (e.g., when RedisTemplate adds quotes)
+            if (eventClass == null) {
+                // Try removing quotes if present
+                String unquotedEventType = eventType;
+                if ((eventType.startsWith("\"") && eventType.endsWith("\"")) || 
+                    (eventType.startsWith("'") && eventType.endsWith("'"))) {
+                    unquotedEventType = eventType.substring(1, eventType.length() - 1);
+                    logger.debug("[RedisStreamEventBus] Trying unquoted event type: {}", unquotedEventType);
+                    eventClass = eventTypeToClassMap.get(unquotedEventType);
+                }
+            }
+            
+            if (eventClass == null) {
+                logger.error("[RedisStreamEventBus] No registered handler for event type: {}", eventType);
+                return false;
+            }
+            List<EventHandler> localHandlers = handlers.get(eventClass);
+            int handlerCount = localHandlers == null ? 0 : localHandlers.size();
+            logger.info("[RedisStreamEventBus] Resolved event class: {}, handlers registered: {}", eventClass.getName(), handlerCount);
+            
+            // Deserialize the event from JSON string using the comprehensive deserializeDomainEvent method
+            logger.debug("[RedisStreamEventBus] Deserializing event from JSON: {}", serializedEvent);
+            
+            DomainEvent event = deserializeDomainEvent(serializedEvent, eventClass);
+            
+            if (event != null) {
+                // Publish to local handlers - this ensures idempotency checks are applied
+                publishToLocalHandlers(event);
+                
+                // Do NOT publish to Spring application event publisher to avoid duplicate processing
+                // applicationEventPublisher.publishEvent(event); // Removed to avoid duplicate processing
+                
+                logger.info("[RedisStreamEventBus] Successfully processed event: {}", event.getClass().getName());
+            } else {
+                // This is expected behavior if the event has been handled locally
+                logger.info("[RedisStreamEventBus] Event deserialization returned null, which is expected for domain events handled locally. Acknowledging message.");
+            }
+            
+            return true; // Always return true to avoid unnecessary retries and DLQ entries
+        } finally {
+            if (contextJson != null) {
+                CommandContextHolder.clearContext();
+            }
         }
-        
-        return true; // Always return true to avoid unnecessary retries and DLQ entries
     }
     
     /**
@@ -585,7 +624,7 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
             // Since we now store plain JSON strings in Redis (not wrapped in arrays),
             // direct deserialization should work in most cases.
             return objectMapper.readValue(json, eventClass);
-        } catch (com.fasterxml.jackson.databind.exc.InvalidDefinitionException e) {
+        } catch (InvalidDefinitionException e) {
             // Expected case: Domain events often don't have default constructors
             logger.warn("[RedisStreamEventBus] Cannot deserialize {} due to missing constructor. This is normal if the event has been handled locally.", eventClass.getName());
             return null;
@@ -668,43 +707,62 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
     @Override
     public void publish(DomainEvent event) throws BaseException {
         try {
-            logger.info("[RedisStreamEventBus] Publishing event: {} to stream: {}, eventId: {}", 
-                       event.getClass().getName(), streamKey, event.getEventId());
+            // Capture context
+            final CommandContext context = CommandContextHolder.getContext();
             
-            // Create stream entry with field-value pairs
-            // Use a smaller initial capacity for better memory efficiency
-            Map<String, String> entry = new HashMap<>(2);
-            
-            // Manually serialize event to JSON string using the optimized ObjectMapper
-            // This ensures we have full control over the serialization format and avoids
-            // RedisTemplate's wrapper (e.g. ["class", {data}])
-            String eventJson = objectMapper.writeValueAsString(event);
-            
-            entry.put("event", eventJson);
-            entry.put("type", event.getClass().getName());
-            logger.debug("[RedisStreamEventBus] Stream entry created: {}", entry);
-            
-            // Use RedisTemplate's opsForStream to add the entry
-            logger.debug("[RedisStreamEventBus] Calling redisTemplate.opsForStream().add()");
-            
-            // Add entry with MAXLEN option to automatically trim old entries, avoiding manual cleanup
-            StreamOperations<String, String, String> streamOps = streamRedisTemplate.opsForStream();
-            Object recordId = streamOps.add(streamKey, entry);
-            
-            logger.info("[RedisStreamEventBus] Event published to stream: {}, recordId: {}, eventId: {}", 
-                       event.getClass().getName(), recordId, event.getEventId());
-            
-            // Verify the entry was added
-            if (recordId != null) {
-                logger.info("[RedisStreamEventBus] Record added successfully with ID: {}", recordId);
+            // Define the publish action
+            Runnable publishAction = () -> {
+                try {
+                    logger.info("[RedisStreamEventBus] Publishing event: {} to stream: {}, eventId: {}", 
+                               event.getClass().getName(), streamKey, event.getEventId());
+                    
+                    // Create stream entry with field-value pairs
+                    Map<String, String> entry = new HashMap<>(3);
+                    
+                    // Serialize event
+                    String eventJson = objectMapper.writeValueAsString(event);
+                    entry.put("event", eventJson);
+                    entry.put("type", event.getClass().getName());
+                    
+                    // Serialize context if available
+                    if (context != null) {
+                        try {
+                            String contextJson = objectMapper.writeValueAsString(context);
+                            entry.put("context", contextJson);
+                        } catch (Exception e) {
+                            logger.warn("[RedisStreamEventBus] Failed to serialize context", e);
+                        }
+                    }
+                    
+                    logger.debug("[RedisStreamEventBus] Stream entry created: {}", entry);
+                    
+                    StreamOperations<String, String, String> streamOps = streamRedisTemplate.opsForStream();
+                    Object recordId = streamOps.add(streamKey, entry);
+                    
+                    logger.info("[RedisStreamEventBus] Event published to stream: {}, recordId: {}, eventId: {}", 
+                               event.getClass().getName(), recordId, event.getEventId());
+                } catch (Exception e) {
+                    logger.error("[RedisStreamEventBus] Error publishing event in action: {}", e.getMessage(), e);
+                    throw new RuntimeException("Failed to publish event to Redis Stream", e);
+                }
+            };
+
+            // Check if transaction is active
+            if (TransactionSynchronizationManager.isActualTransactionActive()) {
+                logger.info("[RedisStreamEventBus] Transaction active, registering synchronization for event: {}", event.getEventId());
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        try {
+                            publishAction.run();
+                        } catch (Exception e) {
+                            logger.error("[RedisStreamEventBus] Error publishing event after commit: {}", e.getMessage(), e);
+                        }
+                    }
+                });
             } else {
-                logger.error("[RedisStreamEventBus] Failed to get record ID after publish");
+                publishAction.run();
             }
-            
-            // Stream events should only be processed by the stream listener, not directly
-            // This ensures idempotency checks are applied consistently and prevents duplicate execution
-            // applicationEventPublisher.publishEvent(event); // Removed to avoid duplicate processing
-            // publishToLocalHandlers(event); // Removed to avoid duplicate processing
             
         } catch (Exception e) {
             logger.error("[RedisStreamEventBus] Error publishing event: {}", e.getMessage(), e);

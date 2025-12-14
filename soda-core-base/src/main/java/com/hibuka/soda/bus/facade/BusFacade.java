@@ -4,6 +4,8 @@ import com.hibuka.soda.cqrs.query.BaseQuery;
 import com.hibuka.soda.cqrs.command.Command;
 import com.hibuka.soda.cqrs.command.CommandBus;
 import com.hibuka.soda.cqrs.query.QueryBus;
+import com.hibuka.soda.context.CommandContext;
+import com.hibuka.soda.context.CommandContextHolder;
 import com.hibuka.soda.foundation.error.BaseException;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -87,14 +89,27 @@ public class BusFacade {
             logger.error("[BusFacade] Command recursion too deep! Trace: {}", trace);
             throw new IllegalStateException("Command recursion too deep! Trace: " + trace);
         }
+        
+        // Capture context from current thread
+        final CommandContext context = CommandContextHolder.getContext();
+        
         recursionDepth.set(depth + 1);
         recursionTrace.get().append("->").append(command.getClass().getSimpleName());
         try {
             return CompletableFuture.supplyAsync(() -> {
+                // Restore context in async thread
+                if (context != null) {
+                    CommandContextHolder.setContext(context);
+                }
                 try {
                     return commandBus.send(command);
                 } catch (BaseException e) {
                     throw new RuntimeException(e);
+                } finally {
+                    // Clean up context
+                    if (context != null) {
+                        CommandContextHolder.clearContext();
+                    }
                 }
             }, cqrsAsyncExecutor);
         } finally {

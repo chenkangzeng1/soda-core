@@ -87,6 +87,19 @@ public class CommandContext {
         return context;
     }
 
+    /**
+     * Sets the context map.
+     * This method is primarily used for serialization/deserialization.
+     *
+     * @param contextMap the context map to set
+     */
+    public void setContext(Map<String, Object> contextMap) {
+        this.context.clear();
+        if (contextMap != null) {
+            this.context.putAll(contextMap);
+        }
+    }
+
     // Getters and setters
     public String getRequestId() {
         return requestId;
