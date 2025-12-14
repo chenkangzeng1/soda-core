@@ -1,12 +1,13 @@
 package com.hibuka.soda.event.redis.service.impl;
 
-import com.hibuka.soda.core.EventProperties;
+import com.hibuka.soda.bus.configuration.EventProperties;
 import com.hibuka.soda.event.redis.service.IdempotencyService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.HashOperations;
+import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.util.StringUtils;
 
 import java.util.HashMap;
@@ -81,30 +82,15 @@ public class RedisIdempotencyServiceImpl implements IdempotencyService {
                 // If FAILED, we can retry
             }
             
-            // Set status to PROCESSING with expiration
-            Map<String, Object> statusMap = new HashMap<>();
+            // Set status to PROCESSING with expiration - use smaller initial capacity
+            Map<String, Object> statusMap = new HashMap<>(2);
             statusMap.put(STATUS_FIELD, ProcessingStatus.PROCESSING.name());
-            statusMap.put(PROCESSED_AT_FIELD, System.currentTimeMillis());
+            statusMap.put(PROCESSED_AT_FIELD, String.valueOf(System.currentTimeMillis()));
             
-            redisTemplate.execute((RedisCallback<Object>) connection -> {
-                // Use Redis transaction for atomic operation
-                connection.multi();
-                @SuppressWarnings("unchecked")
-                byte[] rawKey = ((org.springframework.data.redis.serializer.RedisSerializer<String>)redisTemplate.getKeySerializer()).serialize(key);
-                
-                // Since we need to put a map, we need to iterate
-                for (Map.Entry<String, Object> entry : statusMap.entrySet()) {
-                    @SuppressWarnings("unchecked")
-                    byte[] rawField = ((org.springframework.data.redis.serializer.RedisSerializer<String>)redisTemplate.getHashKeySerializer()).serialize(entry.getKey());
-                    @SuppressWarnings("unchecked")
-                    byte[] rawVal = ((org.springframework.data.redis.serializer.RedisSerializer<Object>)redisTemplate.getHashValueSerializer()).serialize(entry.getValue());
-                    connection.hSet(rawKey, rawField, rawVal);
-                }
-                
-                connection.expire(rawKey, idempotencyProperties.getExpireTime());
-                connection.exec();
-                return null;
-            });
+            // Use hashOps.putAll for batch operation instead of manual transaction
+            hashOps.putAll(key, statusMap);
+            // Set expiration separately - this is acceptable since status is already PROCESSING
+            redisTemplate.expire(key, idempotencyProperties.getExpireTime(), TimeUnit.SECONDS);
             
             logger.debug("[RedisIdempotencyServiceImpl] Begin processing event: {}", eventId);
             return true;
@@ -125,9 +111,11 @@ public class RedisIdempotencyServiceImpl implements IdempotencyService {
         String key = generateKey(eventId);
         
         try {
-            Map<String, Object> statusMap = new HashMap<>();
+            // Use smaller initial capacity based on actual needs
+            int capacity = handlerResults != null && !handlerResults.isEmpty() ? 3 : 2;
+            Map<String, Object> statusMap = new HashMap<>(capacity);
             statusMap.put(STATUS_FIELD, ProcessingStatus.SUCCESS.name());
-            statusMap.put(PROCESSED_AT_FIELD, System.currentTimeMillis());
+            statusMap.put(PROCESSED_AT_FIELD, String.valueOf(System.currentTimeMillis()));
             if (handlerResults != null && !handlerResults.isEmpty()) {
                 statusMap.put(HANDLER_RESULTS_FIELD, handlerResults.toString());
             }
@@ -150,9 +138,11 @@ public class RedisIdempotencyServiceImpl implements IdempotencyService {
         String key = generateKey(eventId);
         
         try {
-            Map<String, Object> statusMap = new HashMap<>();
+            // Use smaller initial capacity based on actual needs
+            int capacity = StringUtils.hasText(error) ? 3 : 2;
+            Map<String, Object> statusMap = new HashMap<>(capacity);
             statusMap.put(STATUS_FIELD, ProcessingStatus.FAILED.name());
-            statusMap.put(PROCESSED_AT_FIELD, System.currentTimeMillis());
+            statusMap.put(PROCESSED_AT_FIELD, String.valueOf(System.currentTimeMillis()));
             if (StringUtils.hasText(error)) {
                 statusMap.put(ERROR_FIELD, error);
             }
@@ -191,20 +181,43 @@ public class RedisIdempotencyServiceImpl implements IdempotencyService {
     public void cleanupExpiredStatus() {
         try {
             String pattern = idempotencyProperties.getRedisKeyPrefix() + ":*";
-            Set<String> keys = redisTemplate.keys(pattern);
             
-            if (keys != null && !keys.isEmpty()) {
-                int cleanedCount = 0;
-                for (String key : keys) {
-                    // Check if the key has expired
-                    Boolean exists = redisTemplate.hasKey(key);
-                    if (exists != null && !exists) {
-                        redisTemplate.delete(key);
-                        cleanedCount++;
+            // Use SCAN instead of KEYS to avoid blocking Redis when there are many keys
+            redisTemplate.execute((RedisCallback<Void>) connection -> {
+                ScanOptions options = ScanOptions.scanOptions().match(pattern).count(100).build();
+                
+                org.springframework.data.redis.core.Cursor<byte[]> cursor = connection.scan(options);
+                
+                int deletedCount = 0;
+                Set<String> batchKeys = new java.util.HashSet<>(100);
+                
+                while (cursor.hasNext()) {
+                    byte[] keyBytes = cursor.next();
+                    String key = redisTemplate.getStringSerializer().deserialize(keyBytes);
+                    if (key != null) {
+                        batchKeys.add(key);
+                        
+                        // Delete in batches to avoid blocking Redis with large delete operations
+                        if (batchKeys.size() >= 100) {
+                            redisTemplate.delete(batchKeys);
+                            deletedCount += batchKeys.size();
+                            batchKeys.clear();
+                        }
                     }
                 }
-                logger.info("[RedisIdempotencyServiceImpl] Cleaned up {} expired idempotency status records", cleanedCount);
-            }
+                
+                // Delete remaining keys
+                if (!batchKeys.isEmpty()) {
+                    redisTemplate.delete(batchKeys);
+                    deletedCount += batchKeys.size();
+                }
+                
+                if (deletedCount > 0) {
+                    logger.info("[RedisIdempotencyServiceImpl] Cleaned up {} idempotency status records", deletedCount);
+                }
+                
+                return null;
+            });
         } catch (Exception e) {
             logger.error("[RedisIdempotencyServiceImpl] Error cleaning up expired status: {}", 
                     e.getMessage(), e);

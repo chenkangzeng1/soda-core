@@ -1,0 +1,80 @@
+package com.hibuka.soda.bus.impl;
+
+import com.hibuka.soda.foundation.error.BaseErrorCode;
+import com.hibuka.soda.foundation.error.BaseException;
+import com.hibuka.soda.cqrs.command.Command;
+import com.hibuka.soda.cqrs.command.CommandBus;
+import com.hibuka.soda.cqrs.command.CommandHandler;
+import com.hibuka.soda.bus.configuration.EventProperties;
+import org.springframework.core.GenericTypeResolver;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Default implementation of command bus, automatically registers and dispatches command handlers based on thread-safe Map, supports monitoring and exception handling.
+ *
+ * @author kangzeng.ckz
+ * @since 2024/10/27
+ **/
+public class SimpleCommandBus implements CommandBus {
+    private static final Logger logger = LoggerFactory.getLogger(SimpleCommandBus.class);
+    private final EventProperties eventProperties;
+    private final Map<Class<? extends Command>, CommandHandler<?, ?>> handlers = new ConcurrentHashMap<>();
+
+    /**
+     * Constructor for SimpleCommandBus.
+     * @param commandHandlers the list of command handlers
+     */
+    public SimpleCommandBus(List<CommandHandler<?, ?>> commandHandlers) {
+        this(commandHandlers, null);
+    }
+
+    public SimpleCommandBus(List<CommandHandler<?, ?>> commandHandlers, EventProperties eventProperties) {
+        this.eventProperties = eventProperties;
+        logger.info("[SimpleCommandBus] Constructor called, handlers size: {}", commandHandlers.size());
+        for (CommandHandler<?, ?> handler : commandHandlers) {
+            Class<?>[] typeArguments = GenericTypeResolver.resolveTypeArguments(
+                    handler.getClass(),
+                    CommandHandler.class
+            );
+            if (typeArguments != null && typeArguments.length > 0) {
+                Class<? extends Command> commandType = (Class<? extends Command>) typeArguments[0];
+                handlers.put(commandType, handler);
+                logger.info("[SimpleCommandBus] Registered handler for command: {}", commandType.getName());
+            }
+        }
+        logger.info("[SimpleCommandBus] Registered {} command handlers", handlers.size());
+        if (this.eventProperties != null) {
+            boolean streamEnabled = this.eventProperties.getRedis() != null
+                    && this.eventProperties.getRedis().getStream() != null
+                    && this.eventProperties.getRedis().getStream().isEnabled();
+            logger.info("[SimpleCommandBus] Event bus type: {}, stream.enabled: {}", 
+                    this.eventProperties.getBusType(), streamEnabled);
+            if (streamEnabled) {
+                logger.info("[SimpleCommandBus] Stream mode enabled: will rely on EventBus for async dispatch; no local sync dispatch in command bus");
+            }
+        } else {
+            logger.info("[SimpleCommandBus] EventProperties not available for logging");
+        }
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public <R> R send(Command<R> command) throws BaseException {
+        if (command == null) {
+            throw new NullPointerException("command must not be null");
+        }
+        logger.info("[SimpleCommandBus] send called for command: {}", command.getClass().getName());
+        CommandHandler<Command<R>, R> handler = (CommandHandler<Command<R>, R>) handlers.get(command.getClass());
+        if (handler == null) {
+            throw new BaseException(BaseErrorCode.CLASS_NOT_FOUND_ERROR.getCode(),
+                    "No handler registered for command: " + command.getClass().getName());
+        }
+        R result = handler.handle(command);
+        return result;
+    }
+}

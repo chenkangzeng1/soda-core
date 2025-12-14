@@ -8,14 +8,12 @@
         <groupId>com.hibuka.soda</groupId>
         <artifactId>soda-core-parent</artifactId>
         <version>2.1.0</version>
-        <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>soda-event-redis</artifactId>
+    <artifactId>soda-event-spring</artifactId>
+    <name>soda-event-spring</name>
+    <description>Spring event bus extension for soda-core</description>
     <packaging>jar</packaging>
-
-    <name>soda-event-redis</name>
-    <description>Redis event bus extension for soda-core</description>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -23,18 +21,6 @@
         <maven.compiler.target>17</maven.compiler.target>
         <spring-boot.version>3.2.12</spring-boot.version>
     </properties>
-
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-dependencies</artifactId>
-                <version>${spring-boot.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
 
     <dependencies>
         <!-- Core dependency -->
@@ -44,16 +30,14 @@
             <version>${project.version}</version>
         </dependency>
 
-        <!-- Redis dependencies -->
+        <!-- Spring dependencies -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-redis</artifactId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
         </dependency>
-        
-        <!-- Jackson JSR310 module for Java 8 date/time support -->
         <dependency>
-            <groupId>com.fasterxml.jackson.datatype</groupId>
-            <artifactId>jackson-datatype-jsr310</artifactId>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-context</artifactId>
         </dependency>
 
         <!-- Spring Boot test -->
@@ -62,8 +46,6 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
-        
-
     </dependencies>
 
     <build>
@@ -85,27 +67,4 @@
             </plugin>
         </plugins>
     </build>
-
-    <licenses>
-        <license>
-            <name>MIT License</name>
-            <url>https://opensource.org/licenses/MIT</url>
-            <distribution>repo</distribution>
-        </license>
-    </licenses>
-
-    <developers>
-        <developer>
-            <name>Scoda Team</name>
-            <email>chenkangzeng@163.com</email>
-            <organization>Scoda</organization>
-            <organizationUrl>https://github.com/chenkangzeng1</organizationUrl>
-        </developer>
-    </developers>
-
-    <scm>
-        <connection>scm:git:https://github.com/chenkangzeng1/soda-core.git</connection>
-        <developerConnection>scm:git:git@github.com:chenkangzeng1/soda-core.git</developerConnection>
-        <url>https://github.com/chenkangzeng1/soda-core</url>
-    </scm>
 </project>

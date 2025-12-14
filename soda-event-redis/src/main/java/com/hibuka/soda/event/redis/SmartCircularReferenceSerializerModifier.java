@@ -23,30 +23,7 @@ import java.util.concurrent.locks.Lock;
  */
 public class SmartCircularReferenceSerializerModifier extends BeanSerializerModifier {
 
-    private static final List<String> COMMON_CIRCULAR_REFERENCE_FIELD_NAMES = List.of(
-            "logger",
-            "log",
-            "applicationContext",
-            "beanFactory",
-            "environment",
-            "eventPublisher",
-            "parent",
-            "children",
-            "handler",
-            "listener",
-            "delegate",
-            "target",
-            "source",
-            "service",
-            "manager",
-            "factory",
-            "executor",
-            "executorService",
-            "threadPool",
-            "scheduledExecutor",
-            "cache",
-            "cacheManager"
-    );
+    private static final List<String> COMMON_CIRCULAR_REFERENCE_FIELD_NAMES = List.of();
 
     /**
      * Modifies the list of BeanPropertyWriter instances to ignore common circular reference fields.

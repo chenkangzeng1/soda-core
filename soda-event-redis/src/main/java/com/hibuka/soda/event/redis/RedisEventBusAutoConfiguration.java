@@ -1,9 +1,9 @@
 package com.hibuka.soda.event.redis;
 
-import com.hibuka.soda.cqrs.handle.EventBus;
-import com.hibuka.soda.cqrs.handle.EventHandler;
-import com.hibuka.soda.core.EventProperties;
-import com.hibuka.soda.domain.DomainEvent;
+import com.hibuka.soda.cqrs.event.EventBus;
+import com.hibuka.soda.cqrs.event.EventHandler;
+import com.hibuka.soda.bus.configuration.EventProperties;
+import com.hibuka.soda.domain.event.DomainEvent;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
@@ -60,6 +60,39 @@ public class RedisEventBusAutoConfiguration {
         logger.info("[RedisEventBusAutoConfiguration] Bus type: {}", eventProperties.getBusType());
     }
     
+    private ObjectMapper createSodaEventObjectMapper() {
+        logger.info("[RedisEventBusAutoConfiguration] Creating optimized ObjectMapper for event serialization");
+        ObjectMapper objectMapper = new ObjectMapper();
+        objectMapper.registerModule(new JavaTimeModule());
+        objectMapper.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
+        objectMapper.configure(SerializationFeature.FAIL_ON_EMPTY_BEANS, false);
+        objectMapper.configure(SerializationFeature.INDENT_OUTPUT, false);
+        objectMapper.configure(SerializationFeature.CLOSE_CLOSEABLE, false);
+        objectMapper.configure(SerializationFeature.FLUSH_AFTER_WRITE_VALUE, false);
+        objectMapper.configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+        objectMapper.configure(com.fasterxml.jackson.databind.DeserializationFeature.ACCEPT_SINGLE_VALUE_AS_ARRAY, true);
+        objectMapper.configure(com.fasterxml.jackson.databind.DeserializationFeature.READ_ENUMS_USING_TO_STRING, true);
+        
+        // Ensure polymorphism is handled for AbstractDomainEvent subclasses
+        // This is crucial for deserializing events like ProducerEvent when the type is AbstractDomainEvent
+        objectMapper.activateDefaultTyping(
+            objectMapper.getPolymorphicTypeValidator(),
+            ObjectMapper.DefaultTyping.NON_FINAL,
+            JsonTypeInfo.As.PROPERTY
+        );
+        
+        objectMapper.setSerializerFactory(
+            objectMapper.getSerializerFactory()
+                .withSerializerModifier(new SmartCircularReferenceSerializerModifier())
+        );
+        configureCircularReferenceHandling(objectMapper);
+        configureGlobalIgnoredTypes(objectMapper);
+        logger.info("[RedisEventBusAutoConfiguration] Created optimized ObjectMapper for event serialization");
+        return objectMapper;
+    }
+    
+
+    
     /**
      * Creates a Redis template with proper serializers for event publishing.
      * Default name is sodaRedisEventBusTemplate to avoid conflicts with user-defined Redis templates.
@@ -71,34 +104,18 @@ public class RedisEventBusAutoConfiguration {
     @ConditionalOnBean(RedisConnectionFactory.class)
     public RedisTemplate<String, Object> sodaRedisEventBusTemplate(RedisConnectionFactory redisConnectionFactory) {
         logger.info("[RedisEventBusAutoConfiguration] Creating sodaRedisEventBusTemplate");
+        ObjectMapper sodaEventObjectMapper = createSodaEventObjectMapper();
         RedisTemplate<String, Object> template = new RedisTemplate<>();
         template.setConnectionFactory(redisConnectionFactory);
         template.setKeySerializer(new StringRedisSerializer());
         
-        // Create ObjectMapper with Java 8 date/time support and other necessary configurations
-        ObjectMapper objectMapper = new ObjectMapper();
-        objectMapper.registerModule(new JavaTimeModule());
-        objectMapper.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
-        objectMapper.configure(SerializationFeature.FAIL_ON_EMPTY_BEANS, false);
-        
-        // Add SmartCircularReferenceSerializerModifier to handle circular references automatically
-        objectMapper.setSerializerFactory(
-            objectMapper.getSerializerFactory()
-                .withSerializerModifier(new SmartCircularReferenceSerializerModifier())
-        );
-        
-        // Configure circular reference handling based on properties
-        configureCircularReferenceHandling(objectMapper);
-        
-        // Add global configuration to ignore common circular reference types
-        // This prevents StackOverflowError and serialization issues
-        configureGlobalIgnoredTypes(objectMapper);
-        
-        // Use customized ObjectMapper for JSON serialization
-        template.setValueSerializer(new GenericJackson2JsonRedisSerializer(objectMapper));
+        // Use StringRedisSerializer for values to store JSON as plain strings
+        // This avoids double-serialization and "array wrapping" by GenericJackson2JsonRedisSerializer
+        template.setValueSerializer(new StringRedisSerializer());
         template.setHashKeySerializer(new StringRedisSerializer());
-        template.setHashValueSerializer(new GenericJackson2JsonRedisSerializer(objectMapper));
+        template.setHashValueSerializer(new StringRedisSerializer());
         template.afterPropertiesSet();
+        
         logger.info("[RedisEventBusAutoConfiguration] Created sodaRedisEventBusTemplate");
         return template;
     }
@@ -117,7 +134,7 @@ public class RedisEventBusAutoConfiguration {
     @Bean
     @Primary
     @ConditionalOnBean(RedisConnectionFactory.class)
-    @ConditionalOnProperty(name = "soda.event.redis.stream.enabled", havingValue = "false", matchIfMissing = true)
+    @ConditionalOnProperty(name = "soda.event.redis.stream.enabled", havingValue = "true", matchIfMissing = true)
     public EventBus redisStreamEventBus(@Qualifier("sodaRedisEventBusTemplate") RedisTemplate<String, Object> sodaRedisEventBusTemplate,
                                        ApplicationEventPublisher applicationEventPublisher,
                                        RedisConnectionFactory redisConnectionFactory,
@@ -151,7 +168,8 @@ public class RedisEventBusAutoConfiguration {
             initialRetryDelay,
             exponentialBackoff,
             deadLetterStream,
-            eventProperties.getRedis().getStream().getIdempotency()
+            eventProperties.getRedis().getStream().getIdempotency(),
+            createSodaEventObjectMapper()
         );
         
         logger.info("[RedisEventBusAutoConfiguration] Created RedisStreamEventBus (Stream mode)");
@@ -206,8 +224,8 @@ public class RedisEventBusAutoConfiguration {
      */
     private void configureGlobalIgnoredTypes(ObjectMapper objectMapper) {
         try {
-            // Configure circular reference handling
-            objectMapper.activateDefaultTyping(LaissezFaireSubTypeValidator.instance, ObjectMapper.DefaultTyping.NON_FINAL);
+            // Limit type info to DomainEvent only
+            // objectMapper.addMixIn(DomainEvent.class, DomainEventTypeMixIn.class);
             
             // Ignore Logger and related types
             objectMapper.addMixIn(Logger.class, IgnoreMixIn.class);

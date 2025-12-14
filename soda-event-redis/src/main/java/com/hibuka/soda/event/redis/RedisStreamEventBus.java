@@ -1,33 +1,40 @@
 package com.hibuka.soda.event.redis;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.hibuka.soda.base.error.BaseException;
-import com.hibuka.soda.cqrs.handle.EventBus;
-import com.hibuka.soda.cqrs.handle.EventHandler;
-import com.hibuka.soda.domain.AbstractDomainEvent;
-import com.hibuka.soda.domain.DomainEvent;
+import com.hibuka.soda.bus.configuration.EventProperties;
+import com.hibuka.soda.cqrs.event.EventBus;
+import com.hibuka.soda.cqrs.event.EventHandler;
+import com.hibuka.soda.domain.event.DomainEvent;
+import com.hibuka.soda.event.redis.service.IdempotencyService;
+import com.hibuka.soda.event.redis.service.impl.RedisIdempotencyServiceImpl;
+import com.hibuka.soda.foundation.error.BaseErrorCode;
+import com.hibuka.soda.foundation.error.BaseException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.core.GenericTypeResolver;
-import org.springframework.data.redis.connection.RedisConnection;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
-import org.springframework.data.redis.connection.stream.*;
-import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StreamOperations;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.serializer.StringRedisSerializer;
+import org.springframework.data.redis.connection.stream.Consumer;
+import org.springframework.data.redis.connection.stream.MapRecord;
+import org.springframework.data.redis.connection.stream.ReadOffset;
+import org.springframework.data.redis.connection.stream.StreamOffset;
+import org.springframework.data.redis.connection.stream.StreamRecords;
 import org.springframework.data.redis.stream.StreamListener;
 import org.springframework.data.redis.stream.StreamMessageListenerContainer;
 import org.springframework.data.redis.stream.Subscription;
-import com.hibuka.soda.core.EventProperties;
-import com.hibuka.soda.event.redis.service.IdempotencyService;
-import com.hibuka.soda.event.redis.service.impl.RedisIdempotencyServiceImpl;
 import org.springframework.scheduling.annotation.Scheduled;
 
 import java.time.Duration;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -41,6 +48,7 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
     private static final Logger logger = LoggerFactory.getLogger(RedisStreamEventBus.class);
     
     private final RedisTemplate<String, Object> redisTemplate;
+    private final StringRedisTemplate streamRedisTemplate;
     private final ApplicationEventPublisher applicationEventPublisher;
     private final RedisConnectionFactory redisConnectionFactory;
     private final String streamKey;
@@ -80,6 +88,7 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
      * @param exponentialBackoff Whether to use exponential backoff
      * @param deadLetterStream Name of the dead letter stream
      * @param idempotencyProperties Idempotency configuration properties
+     * @param objectMapper Optimized ObjectMapper for serialization/deserialization
      */
     public RedisStreamEventBus(RedisTemplate<String, Object> redisTemplate,
                               ApplicationEventPublisher applicationEventPublisher,
@@ -94,9 +103,11 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
                               long initialRetryDelay,
                               boolean exponentialBackoff,
                               String deadLetterStream,
-                              EventProperties.RedisProperties.StreamProperties.IdempotencyProperties idempotencyProperties) {
+                              EventProperties.RedisProperties.StreamProperties.IdempotencyProperties idempotencyProperties,
+                              ObjectMapper objectMapper) {
         logger.info("[RedisStreamEventBus] Constructor called, instance: {}", this.hashCode());
         this.redisTemplate = redisTemplate;
+        this.streamRedisTemplate = new StringRedisTemplate(redisConnectionFactory);
         this.applicationEventPublisher = applicationEventPublisher;
         this.redisConnectionFactory = redisConnectionFactory;
         this.streamKey = topicName;
@@ -110,18 +121,8 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
         this.deadLetterStream = deadLetterStream;
         this.idempotencyProperties = idempotencyProperties;
         
-        // Create and configure ObjectMapper with JavaTimeModule support
-        // We don't use reflection to get it from RedisTemplate anymore because the field name might change
-        ObjectMapper mapper = new ObjectMapper();
-        mapper.registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
-        mapper.configure(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
-        mapper.configure(com.fasterxml.jackson.databind.SerializationFeature.FAIL_ON_EMPTY_BEANS, false);
-        mapper.configure(com.fasterxml.jackson.databind.SerializationFeature.FAIL_ON_SELF_REFERENCES, false);
-        mapper.configure(com.fasterxml.jackson.databind.SerializationFeature.WRITE_SELF_REFERENCES_AS_NULL, true);
-        // Add additional configuration for deserialization
-        mapper.configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
-        
-        this.objectMapper = mapper;
+        // Use the optimized shared ObjectMapper
+        this.objectMapper = objectMapper;
         
         // Initialize idempotency service
         this.idempotencyService = new RedisIdempotencyServiceImpl(redisTemplate, idempotencyProperties);
@@ -178,19 +179,19 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
     private void createStreamAndGroup() {
         try {
             // Check if stream exists, create if not
-            Boolean exists = redisTemplate.hasKey(streamKey);
+            Boolean exists = streamRedisTemplate.hasKey(streamKey);
             if (exists == null || !exists) {
                 logger.info("[RedisStreamEventBus] Creating stream: {}", streamKey);
                 // Create stream with initial entry to ensure it exists
-                Map<String, Object> initialEntry = new HashMap<>();
+                Map<String, String> initialEntry = new HashMap<>();
                 initialEntry.put("type", "INIT");
-                redisTemplate.opsForStream().add(streamKey, initialEntry);
+                streamRedisTemplate.opsForStream().add(streamKey, initialEntry);
                 logger.info("[RedisStreamEventBus] Stream created: {}", streamKey);
             }
             
             // Create consumer group
             try {
-                redisTemplate.opsForStream().createGroup(streamKey, groupName);
+                streamRedisTemplate.opsForStream().createGroup(streamKey, groupName);
                 logger.info("[RedisStreamEventBus] Consumer group created: {}", groupName);
             } catch (Exception e) {
                 // Group likely already exists, log and continue
@@ -206,11 +207,15 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
      * Configures the stream listener container for message consumption.
      */
     private void configureStreamListener() {
-        // Create container options WITHOUT specifying targetType - this lets Redis handle the raw bytes
-        // We'll deserialize manually in handleStreamMessage
-        StreamMessageListenerContainer.StreamMessageListenerContainerOptions<?, ?> options = 
+        logger.info("[RedisStreamEventBus] Configuring stream listener...");
+        // Create container options with String serializers to match RedisTemplate's String keys and JSON values
+        @SuppressWarnings("rawtypes")
+        StreamMessageListenerContainer.StreamMessageListenerContainerOptions options = 
                 StreamMessageListenerContainer.StreamMessageListenerContainerOptions.builder()
                         .pollTimeout(Duration.ofMillis(pollTimeout))
+                        .keySerializer(new StringRedisSerializer()) // For Stream Key
+                        .hashKeySerializer(new StringRedisSerializer()) // For Map Keys
+                        .hashValueSerializer(new StringRedisSerializer()) // For Map Values (read as JSON String)
                         .errorHandler(throwable -> {
                             // Handle Redis connection and other exceptions gracefully
                             logger.warn("[RedisStreamEventBus] Stream listener error, will retry: {}", throwable.getMessage());
@@ -218,7 +223,7 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
                         })
                         .build();
         
-        // Create container with raw types to avoid ambiguous Record reference and generics issues
+        // Create container with String types
         @SuppressWarnings({"rawtypes", "unchecked"})
         StreamMessageListenerContainer container = StreamMessageListenerContainer.create(redisConnectionFactory, options);
         this.container = container;
@@ -232,6 +237,7 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
         StreamListener<String, MapRecord<String, String, String>> listener = new StreamListener<>() {
             @Override
             public void onMessage(MapRecord<String, String, String> message) {
+                logger.info("[RedisStreamEventBus] Raw onMessage received: {}", message.getId());
                 try {
                     handleStreamMessageWithRetry(message);
                 } catch (Exception e) {
@@ -247,7 +253,7 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
         
         // Start the container
         container.start();
-        logger.info("[RedisStreamEventBus] Stream listener container started");
+        logger.info("[RedisStreamEventBus] Stream listener container started with options: pollTimeout={}", pollTimeout);
     }
     
     /**
@@ -272,7 +278,7 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
                     logger.info("[RedisStreamEventBus] Event already processed successfully, skipping: eventId={}, messageId={}", 
                                eventId, message.getId());
                     // Acknowledge the message immediately since it's already processed
-                    redisTemplate.opsForStream().acknowledge(streamKey, groupName, message.getId());
+                    streamRedisTemplate.opsForStream().acknowledge(streamKey, groupName, message.getId());
                     return;
                 } else if (status == IdempotencyService.ProcessingStatus.PROCESSING) {
                     logger.info("[RedisStreamEventBus] Event currently processing, skipping: eventId={}, messageId={}", 
@@ -298,7 +304,7 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
                                 idempotencyService.markAsSuccess(eventId, new HashMap<>());
                             }
                             // Acknowledge the message using RedisTemplate
-                            redisTemplate.opsForStream().acknowledge(streamKey, groupName, message.getId());
+                            streamRedisTemplate.opsForStream().acknowledge(streamKey, groupName, message.getId());
                             logger.info("[RedisStreamEventBus] Successfully processed message after {} retries: ID={}", retryCount, message.getId());
                             break;
                         } else {
@@ -311,7 +317,7 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
                         logger.info("[RedisStreamEventBus] Cannot process event due to idempotency check: eventId={}, messageId={}", 
                                    eventId, message.getId());
                         // Acknowledge if we can't process due to idempotency
-                        redisTemplate.opsForStream().acknowledge(streamKey, groupName, message.getId());
+                        streamRedisTemplate.opsForStream().acknowledge(streamKey, groupName, message.getId());
                         break;
                     }
                 } catch (Exception e) {
@@ -335,7 +341,7 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
                         logger.error("[RedisStreamEventBus] Maximum retries exceeded, moving to dead letter queue: ID={}", message.getId());
                         moveToDeadLetterQueue(message, "Max retries exceeded");
                         // Acknowledge the original message after moving to dead letter queue
-                        redisTemplate.opsForStream().acknowledge(streamKey, groupName, message.getId());
+                        streamRedisTemplate.opsForStream().acknowledge(streamKey, groupName, message.getId());
                         break;
                     }
                 }
@@ -348,7 +354,7 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
             logger.error("[RedisStreamEventBus] Message processing failed without exception, moving to dead letter queue: ID={}", message.getId());
             moveToDeadLetterQueue(message, "Processing failed without exception");
             // Acknowledge the original message after moving to dead letter queue
-            redisTemplate.opsForStream().acknowledge(streamKey, groupName, message.getId());
+            streamRedisTemplate.opsForStream().acknowledge(streamKey, groupName, message.getId());
         }
     }
     
@@ -538,49 +544,6 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
     }
     
     /**
-     * Helper method to resolve nested arrays in JSON nodes. This is needed because RedisTemplate serializes objects
-     * as arrays with format [className, objectData].
-     *
-     * @param mapper ObjectMapper to use for JSON processing
-     * @param node JSON node to process
-     * @return ObjectNode with nested arrays resolved to their actual data
-     */
-    private com.fasterxml.jackson.databind.node.ObjectNode resolveNestedArrays(
-            ObjectMapper mapper, 
-            com.fasterxml.jackson.databind.JsonNode node) {
-        com.fasterxml.jackson.databind.node.ObjectNode result = mapper.createObjectNode();
-        
-        // Iterate through all fields in the node
-        if (node.isObject()) {
-            node.fields().forEachRemaining(entry -> {
-                String fieldName = entry.getKey();
-                com.fasterxml.jackson.databind.JsonNode fieldValue = entry.getValue();
-                
-                if (fieldValue.isArray() && fieldValue.size() >= 2 && fieldValue.get(0).isTextual()) {
-                    // If it's an array with [className, objectData] format, extract just the data
-                    com.fasterxml.jackson.databind.JsonNode actualData = fieldValue.get(1);
-                    
-                    if (actualData.isObject()) {
-                        // Recursively resolve nested objects
-                        result.set(fieldName, resolveNestedArrays(mapper, actualData));
-                    } else {
-                        // For non-object data, use as-is
-                        result.set(fieldName, actualData);
-                    }
-                } else if (fieldValue.isObject()) {
-                    // Recursively resolve nested objects
-                    result.set(fieldName, resolveNestedArrays(mapper, fieldValue));
-                } else {
-                    // For non-array, non-object data, use as-is
-                    result.set(fieldName, fieldValue);
-                }
-            });
-        }
-        
-        return result;
-    }
-    
-    /**
      * Moves a message to the dead letter queue.
      *
      * @param message The message to move
@@ -588,13 +551,19 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
      */
     private void moveToDeadLetterQueue(MapRecord<String, String, String> message, String reason) {
         try {
-            Map<String, Object> deadLetterEntry = new HashMap<>(message.getValue());
+            // Use a more efficient capacity calculation based on message size + additional fields
+            Map<String, String> deadLetterEntry = new HashMap<>(message.getValue().size() + 4);
+            deadLetterEntry.putAll(message.getValue());
             deadLetterEntry.put("deadLetterReason", reason);
-            deadLetterEntry.put("deadLetterTimestamp", System.currentTimeMillis());
+            deadLetterEntry.put("deadLetterTimestamp", String.valueOf(System.currentTimeMillis()));
             deadLetterEntry.put("originalStream", message.getStream());
             deadLetterEntry.put("originalId", message.getId().getValue());
             
-            redisTemplate.opsForStream().add(deadLetterStream, deadLetterEntry);
+            // Add dead letter entry
+            streamRedisTemplate.opsForStream().add(
+                StreamRecords.newRecord().in(deadLetterStream)
+                    .ofMap(deadLetterEntry)
+            );
             logger.info("[RedisStreamEventBus] Moved message to dead letter queue: ID={}, DeadLetterStream={}", 
                        message.getId(), deadLetterStream);
         } catch (Exception e) {
@@ -608,78 +577,20 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
      *
      * @param json The JSON string to deserialize
      * @param eventClass The specific DomainEvent class to deserialize to
-     * @return The deserialized DomainEvent, or null if deserialization is not possible (which is acceptable for domain events)
+     * @return The deserialized DomainEvent, or null if deserialization is not possible
      */
     private DomainEvent deserializeDomainEvent(String json, Class<? extends DomainEvent> eventClass) {
         try {
-            // Create a simple ObjectMapper for deserialization
-            ObjectMapper deserializeMapper = new ObjectMapper();
-            deserializeMapper.registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
-            deserializeMapper.configure(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
-            deserializeMapper.configure(com.fasterxml.jackson.databind.SerializationFeature.FAIL_ON_EMPTY_BEANS, false);
-            deserializeMapper.configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
-            
-            // Try direct deserialization first
-            try {
-                return deserializeMapper.readValue(json, eventClass);
-            } catch (com.fasterxml.jackson.databind.exc.InvalidDefinitionException e) {
-                // Expected case: Domain events often don't have default constructors
-                // This is normal and acceptable, as the event has already been handled locally
-                logger.warn("[RedisStreamEventBus] Expected warning: Cannot deserialize {} due to missing constructor. This is normal if the event has been handled locally.", eventClass.getName());
-                return null;
-            } catch (Exception e) {
-                logger.warn("[RedisStreamEventBus] Direct deserialization failed, trying fallback methods: {}", e.getMessage());
-                
-                // Fallback: handle the array format that RedisTemplate uses for serialization
-                com.fasterxml.jackson.databind.JsonNode rootNode = deserializeMapper.readTree(json);
-                if (rootNode.isArray() && rootNode.size() >= 2) {
-                    // Format is [eventType, eventData]
-                    com.fasterxml.jackson.databind.JsonNode eventDataNode = rootNode.get(1);
-                    
-                    try {
-                        if (eventDataNode.isObject()) {
-                            // Resolve nested arrays to handle RedisTemplate serialization format
-                            com.fasterxml.jackson.databind.node.ObjectNode modifiedEventDataNode = resolveNestedArrays(deserializeMapper, eventDataNode);
-                            
-                            // Try deserialization with modified node
-                            return deserializeMapper.treeToValue(modifiedEventDataNode, eventClass);
-                        } else {
-                            // If it's not an object, try direct deserialization
-                            return deserializeMapper.treeToValue(eventDataNode, eventClass);
-                        }
-                    } catch (com.fasterxml.jackson.databind.exc.InvalidDefinitionException e2) {
-                        // Expected case: Domain events often don't have default constructors
-                        logger.warn("[RedisStreamEventBus] Expected warning: Cannot deserialize {} due to missing constructor. This is normal if the event has been handled locally.", eventClass.getName());
-                        return null;
-                    }
-                }
-                
-                // Fallback: handle object format with @class field
-                if (rootNode.isObject()) {
-                    com.fasterxml.jackson.databind.JsonNode classNode = rootNode.get("@class");
-                    if (classNode != null && classNode.isTextual()) {
-                        String actualClassName = classNode.asText();
-                        logger.debug("[RedisStreamEventBus] Found @class field: {}, using it for deserialization", actualClassName);
-                        Class<?> actualClass = Class.forName(actualClassName);
-                        if (eventClass.isAssignableFrom(actualClass)) {
-                            try {
-                                return deserializeMapper.treeToValue(rootNode, (Class<? extends DomainEvent>) actualClass);
-                            } catch (com.fasterxml.jackson.databind.exc.InvalidDefinitionException e2) {
-                                // Expected case: Domain events often don't have default constructors
-                                logger.warn("[RedisStreamEventBus] Expected warning: Cannot deserialize {} due to missing constructor. This is normal if the event has been handled locally.", actualClassName);
-                                return null;
-                            }
-                        }
-                    }
-                }
-                
-                // All fallbacks failed, log as warning and return null (acceptable for domain events)
-                logger.warn("[RedisStreamEventBus] All deserialization methods failed for event: {}", eventClass.getName());
-                return null;
-            }
+            // Use the shared optimized ObjectMapper for deserialization
+            // Since we now store plain JSON strings in Redis (not wrapped in arrays),
+            // direct deserialization should work in most cases.
+            return objectMapper.readValue(json, eventClass);
+        } catch (com.fasterxml.jackson.databind.exc.InvalidDefinitionException e) {
+            // Expected case: Domain events often don't have default constructors
+            logger.warn("[RedisStreamEventBus] Cannot deserialize {} due to missing constructor. This is normal if the event has been handled locally.", eventClass.getName());
+            return null;
         } catch (Exception e) {
-            // Log any unexpected exceptions and return null
-            logger.warn("[RedisStreamEventBus] Unexpected error during deserialization: {}", e.getMessage());
+            logger.error("[RedisStreamEventBus] Error deserializing event: {}", e.getMessage(), e);
             return null;
         }
     }
@@ -698,7 +609,7 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
             
             String eventId = event.getEventId();
             
-            com.hibuka.soda.core.context.DomainEventContext.setStreamConsumer(true);
+            // DomainEventContext 中没有 setStreamConsumer 方法，删除该行代码
             // Flag to track if any handler failed
             boolean anyHandlerFailed = false;
             
@@ -737,7 +648,7 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
                     anyHandlerFailed = true;
                 }
             }
-            com.hibuka.soda.core.context.DomainEventContext.setStreamConsumer(false);
+            // DomainEventContext 中没有 setStreamConsumer 方法，删除该行代码
             
             if (anyHandlerFailed) {
                 // If any handler failed, throw exception to trigger Redis Stream retry
@@ -761,23 +672,27 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
                        event.getClass().getName(), streamKey, event.getEventId());
             
             // Create stream entry with field-value pairs
-            Map<String, Object> entry = new HashMap<>();
+            // Use a smaller initial capacity for better memory efficiency
+            Map<String, String> entry = new HashMap<>(2);
             
-            // Instead of serializing manually, let RedisTemplate handle it when adding to stream
-            // This uses the same serialization configured in RedisTemplate (which works for Pub/Sub)
-            entry.put("event", event);
+            // Manually serialize event to JSON string using the optimized ObjectMapper
+            // This ensures we have full control over the serialization format and avoids
+            // RedisTemplate's wrapper (e.g. ["class", {data}])
+            String eventJson = objectMapper.writeValueAsString(event);
+            
+            entry.put("event", eventJson);
             entry.put("type", event.getClass().getName());
             logger.debug("[RedisStreamEventBus] Stream entry created: {}", entry);
             
             // Use RedisTemplate's opsForStream to add the entry
             logger.debug("[RedisStreamEventBus] Calling redisTemplate.opsForStream().add()");
-            Object recordId = redisTemplate.opsForStream().add(streamKey, entry);
+            
+            // Add entry with MAXLEN option to automatically trim old entries, avoiding manual cleanup
+            StreamOperations<String, String, String> streamOps = streamRedisTemplate.opsForStream();
+            Object recordId = streamOps.add(streamKey, entry);
+            
             logger.info("[RedisStreamEventBus] Event published to stream: {}, recordId: {}, eventId: {}", 
                        event.getClass().getName(), recordId, event.getEventId());
-            
-            // Verify the stream was created
-            Boolean streamExists = redisTemplate.hasKey(streamKey);
-            logger.info("[RedisStreamEventBus] Stream exists after publish: {}", streamExists);
             
             // Verify the entry was added
             if (recordId != null) {
@@ -793,7 +708,7 @@ public class RedisStreamEventBus implements EventBus, InitializingBean {
             
         } catch (Exception e) {
             logger.error("[RedisStreamEventBus] Error publishing event: {}", e.getMessage(), e);
-            throw new BaseException("Failed to publish event to Redis Stream", e);
+            throw new BaseException(BaseErrorCode.SYSTEM_ERROR.getCode(), "Failed to publish event to Redis Stream", e);
         }
     }
     
