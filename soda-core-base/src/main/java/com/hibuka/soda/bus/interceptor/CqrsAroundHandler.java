@@ -77,6 +77,9 @@ public class CqrsAroundHandler {
             if (cmd.getCallerUid() != null) {
                 DomainEventContext.setCallerUid(String.valueOf(cmd.getCallerUid()));
             }
+            if (cmd.getHopCount() != null) {
+                DomainEventContext.setHopCount(cmd.getHopCount());
+            }
         } else if (firstArg instanceof BaseQuery) {
             requestId = ((BaseQuery) firstArg).getRequestId();
             username = ((BaseQuery) firstArg).getUserName();
@@ -92,6 +95,9 @@ public class CqrsAroundHandler {
             DomainEventContext.setAuthorities(event.getAuthorities());
             if (event.getCallerUid() != null) {
                 DomainEventContext.setCallerUid(event.getCallerUid());
+            }
+            if (event.getHopCount() != null) {
+                DomainEventContext.setHopCount(event.getHopCount());
             }
         }
         Object result;
@@ -142,6 +148,15 @@ public class CqrsAroundHandler {
                     }
                 }
             }
+            
+            // Async recursion protection
+            Integer hopCount = DomainEventContext.getHopCount();
+            int currentHop = (hopCount != null) ? hopCount : 0;
+            if (currentHop > 20) {
+                logger.error("[CqrsAroundHandler] Async recursion too deep! hopCount={}, command={}", currentHop, cmd.getClass().getSimpleName());
+                throw new IllegalStateException("Async recursion too deep! hopCount=" + currentHop);
+            }
+            cmd.setHopCount(currentHop + 1);
         }
 
         // 执行原始命令
@@ -187,6 +202,7 @@ public class CqrsAroundHandler {
         event.setAuthorities(command.getAuthorities());
         event.setUserName(command.getUserName());
         event.setCallerUid(command.getCallerUid());
+        event.setHopCount(command.getHopCount());
     }
 
     private boolean isStreamEnabled() {

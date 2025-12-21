@@ -2,6 +2,7 @@ package com.hibuka.soda.event.spring;
 
 import com.hibuka.soda.context.CommandContext;
 import com.hibuka.soda.context.CommandContextHolder;
+import com.hibuka.soda.context.DomainEventContext;
 import com.hibuka.soda.cqrs.event.EventBus;
 import com.hibuka.soda.domain.aggregate.AbstractAggregateRoot;
 import com.hibuka.soda.domain.event.AbstractDomainEvent;
@@ -70,6 +71,7 @@ public class RepositoryEventAspect {
 
     private void enrichEventsWithContext(List<AbstractDomainEvent> events) {
         CommandContext ctx = CommandContextHolder.getContext();
+        // Priority 1: CommandContext (Legacy)
         if (ctx != null) {
             events.forEach(e -> {
                 e.setRequestId(ctx.getRequestId());
@@ -82,6 +84,29 @@ public class RepositoryEventAspect {
                 String callerUidStr = ctx.getCallerUid();
                 if (callerUidStr != null && !callerUidStr.isEmpty()) {
                     e.setCallerUid(callerUidStr);
+                }
+            });
+        }
+        
+        // Priority 2: DomainEventContext (New, supports hopCount and context propagation)
+        // We check DomainEventContext even if CommandContext is present, to fill missing fields like hopCount
+        String requestId = DomainEventContext.getRequestId();
+        if (requestId != null) {
+             events.forEach(e -> {
+                if (e.getRequestId() == null) {
+                    e.setRequestId(requestId);
+                    e.setJti(DomainEventContext.getJti());
+                    e.setAuthorities(DomainEventContext.getAuthorities());
+                    e.setUserName(DomainEventContext.getUserName());
+                    String callerUid = DomainEventContext.getCallerUid();
+                    if (callerUid != null) {
+                        e.setCallerUid(callerUid);
+                    }
+                }
+                // Always update hopCount from ThreadLocal if available, to support async recursion protection
+                Integer hopCount = DomainEventContext.getHopCount();
+                if (hopCount != null) {
+                    e.setHopCount(hopCount);
                 }
             });
         }

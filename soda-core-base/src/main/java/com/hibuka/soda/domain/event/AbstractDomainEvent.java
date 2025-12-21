@@ -45,6 +45,12 @@ public abstract class AbstractDomainEvent implements DomainEvent {
     private String jti;
 
     /**
+     * Hop count for async recursion protection
+     */
+    @Hidden
+    private Integer hopCount;
+
+    /**
      * Default constructor for AbstractDomainEvent.
      */
     public AbstractDomainEvent() {

@@ -64,4 +64,10 @@ public abstract class BaseCommand<R> implements Command<R> {
     @Schema(hidden = true)
     private String extension;
 
+    /**
+     * Hop count for async recursion protection
+     */
+    @Schema(hidden = true)
+    private Integer hopCount;
+
 } 

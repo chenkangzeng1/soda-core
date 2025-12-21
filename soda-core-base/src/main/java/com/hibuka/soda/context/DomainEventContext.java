@@ -12,6 +12,7 @@ public class DomainEventContext {
     private static final ThreadLocal<String> userNameHolder = new ThreadLocal<>();
     private static final ThreadLocal<String> authoritiesHolder = new ThreadLocal<>();
     private static final ThreadLocal<String> callerUidHolder = new ThreadLocal<>();
+    private static final ThreadLocal<Integer> hopCountHolder = new ThreadLocal<>();
 
     /**
      * Sets the request ID for the current thread.
@@ -104,6 +105,24 @@ public class DomainEventContext {
     }
 
     /**
+     * Sets the hop count for the current thread.
+     *
+     * @param hopCount hop count
+     */
+    public static void setHopCount(Integer hopCount) {
+        hopCountHolder.set(hopCount);
+    }
+
+    /**
+     * Gets the hop count for the current thread.
+     *
+     * @return hop count, or null if not set
+     */
+    public static Integer getHopCount() {
+        return hopCountHolder.get();
+    }
+
+    /**
      * Clears all context information for the current thread.
      */
     public static void clear() {
@@ -112,5 +131,6 @@ public class DomainEventContext {
         userNameHolder.remove();
         authoritiesHolder.remove();
         callerUidHolder.remove();
+        hopCountHolder.remove();
     }
 }
