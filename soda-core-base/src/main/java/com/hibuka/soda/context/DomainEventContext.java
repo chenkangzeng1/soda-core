@@ -10,7 +10,7 @@ public class DomainEventContext {
     private static final ThreadLocal<String> requestIdHolder = new ThreadLocal<>();
     private static final ThreadLocal<String> jtiHolder = new ThreadLocal<>();
     private static final ThreadLocal<String> userNameHolder = new ThreadLocal<>();
-    private static final ThreadLocal<String[]> authoritiesHolder = new ThreadLocal<>();
+    private static final ThreadLocal<String> authoritiesHolder = new ThreadLocal<>();
     private static final ThreadLocal<String> callerUidHolder = new ThreadLocal<>();
 
     /**
@@ -72,7 +72,7 @@ public class DomainEventContext {
      *
      * @param authorities authorities
      */
-    public static void setAuthorities(String[] authorities) {
+    public static void setAuthorities(String authorities) {
         authoritiesHolder.set(authorities);
     }
 
@@ -81,7 +81,7 @@ public class DomainEventContext {
      *
      * @return authorities, or null if not set
      */
-    public static String[] getAuthorities() {
+    public static String getAuthorities() {
         return authoritiesHolder.get();
     }
 

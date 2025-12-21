@@ -27,7 +27,7 @@ public abstract class AbstractDomainEvent implements DomainEvent {
      * the aliUid of call open api.
      */
     @Hidden
-    protected Long callerUid;
+    protected String callerUid;
     /**
      * Username
      */

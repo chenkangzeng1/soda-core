@@ -7,6 +7,9 @@ import com.hibuka.soda.cqrs.query.QueryBus;
 import com.hibuka.soda.cqrs.query.QueryHandler;
 import com.hibuka.soda.bus.impl.SimpleCommandBus;
 import com.hibuka.soda.bus.impl.SimpleQueryBus;
+import com.hibuka.soda.cqrs.event.EventBus;
+import com.hibuka.soda.bus.interceptor.CqrsAroundHandler;
+import com.hibuka.soda.bus.configuration.EventProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -89,6 +92,12 @@ public class SpringBusAutoConfiguration {
                              QueryBus queryBus,
                              @Qualifier("cqrsAsyncExecutor") Executor cqrsAsyncExecutor) {
         return new BusFacade(commandBus, queryBus, cqrsAsyncExecutor);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public CqrsAroundHandler cqrsAroundHandler(EventBus eventBus, EventProperties eventProperties) {
+        return new CqrsAroundHandler(eventBus, eventProperties);
     }
 
     @Bean

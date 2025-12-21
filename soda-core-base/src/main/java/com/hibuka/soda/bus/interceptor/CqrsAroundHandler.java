@@ -5,6 +5,7 @@ import com.hibuka.soda.bus.configuration.EventProperties;
 import com.hibuka.soda.cqrs.command.BaseCommand;
 import com.hibuka.soda.cqrs.event.EventBus;
 import com.hibuka.soda.cqrs.query.BaseQuery;
+import com.hibuka.soda.context.DomainEventContext;
 import com.hibuka.soda.domain.event.AbstractDomainEvent;
 import com.hibuka.soda.domain.event.DomainEvent;
 import com.hibuka.soda.domain.event.DomainEvents;
@@ -43,11 +44,11 @@ public class CqrsAroundHandler {
      * @return the result of method execution
      * @throws Throwable if method execution fails
      */
-    @Around("execution(* com.hibuka.soda.cqrs.handle.CommandHandler+.handle(..)) || " +
-            "execution(* com.hibuka.soda.cqrs.handle.QueryHandler+.handle(..)) || " +
-            "execution(* com.hibuka.soda.cqrs.handle.EventHandler+.handle(..))")
+    @Around("execution(* com.hibuka.soda.cqrs.command.CommandHandler+.handle(..)) || " +
+            "execution(* com.hibuka.soda.cqrs.query.QueryHandler+.handle(..)) || " +
+            "execution(* com.hibuka.soda.cqrs.event.EventHandler+.handle(..))")
     public Object handleExecutor(ProceedingJoinPoint point) throws Throwable {
-        logger.info("[CqrsAroundHandler] handleExecutor invoked! method: {}", point.getSignature());
+        logger.info("[CqrsAroundHandler] handleExecutor intercepted: {}", point.getSignature());
         long timestamp = System.currentTimeMillis();
         Object[] args = point.getArgs();
         Object firstArg = (args != null && args.length > 0) ? args[0] : null;
@@ -64,8 +65,18 @@ public class CqrsAroundHandler {
         }
 
         if (firstArg instanceof BaseCommand) {
-            requestId = ((BaseCommand) firstArg).getRequestId();
-            username = ((BaseCommand) firstArg).getUserName();
+            BaseCommand cmd = (BaseCommand) firstArg;
+            requestId = cmd.getRequestId();
+            username = cmd.getUserName();
+            
+            // Set DomainEventContext from Command
+            DomainEventContext.setRequestId(requestId);
+            DomainEventContext.setUserName(username);
+            DomainEventContext.setJti(cmd.getJti());
+            DomainEventContext.setAuthorities(cmd.getAuthorities());
+            if (cmd.getCallerUid() != null) {
+                DomainEventContext.setCallerUid(String.valueOf(cmd.getCallerUid()));
+            }
         } else if (firstArg instanceof BaseQuery) {
             requestId = ((BaseQuery) firstArg).getRequestId();
             username = ((BaseQuery) firstArg).getUserName();
@@ -78,6 +89,11 @@ public class CqrsAroundHandler {
             result = point.proceed();
         } catch (Throwable throwable) {
             throw throwable;
+        } finally {
+            // Clean up context to prevent memory leaks
+            if (firstArg instanceof BaseCommand) {
+                DomainEventContext.clear();
+            }
         }
         long timestamp1 = System.currentTimeMillis();
         logger.info("requestId:{},method:{}-{}, {}:{}, result:{}, duration:{}-{},username:{}", requestId, point.getSignature().getDeclaringTypeName(),
@@ -92,7 +108,7 @@ public class CqrsAroundHandler {
      * @return the result of method execution
      * @throws Throwable if method execution fails
      */
-    @Around("execution(* com.hibuka.soda.cqrs.handle.CommandBus+.send(..))")
+    @Around("execution(* com.hibuka.soda.cqrs.command.CommandBus+.send(..))")
     public Object handleEventBus(ProceedingJoinPoint joinPoint) throws Throwable {
         logger.info("[CqrsAroundHandler] handleEventBus invoked! method: {}", joinPoint.getSignature());
         logger.info("[CqrsAroundHandler] Current thread: {}, EventBus: {}", Thread.currentThread().getName(), eventBus.getClass().getName());

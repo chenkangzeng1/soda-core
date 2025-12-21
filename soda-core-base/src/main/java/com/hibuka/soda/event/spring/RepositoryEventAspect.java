@@ -29,35 +29,35 @@ public class RepositoryEventAspect {
     }
 
     @Around(
-        "execution(* *..*Repository+.save(..)) || " +
-        "execution(* *..*Repository+.update(..)) || " +
-        "execution(* *..*Repository+.delete(..)) || " +
-        "execution(* *..*Repository+.operate(..))"
+            "execution(* *..*Repository+.save(..)) || " +
+                    "execution(* *..*Repository+.update(..)) || " +
+                    "execution(* *..*Repository+.delete(..)) || " +
+                    "execution(* *..*Repository+.operate(..))"
     )
     public Object aroundSave(ProceedingJoinPoint joinPoint) throws Throwable {
         log.info("[RepositoryEventAspect] Intercepted method: {}", joinPoint.getSignature().getName());
         Object result = joinPoint.proceed();
         Object[] args = joinPoint.getArgs();
-        
+
         if (args != null && args.length > 0 && args[0] instanceof AbstractAggregateRoot) {
             AbstractAggregateRoot agg = (AbstractAggregateRoot) args[0];
             List<AbstractDomainEvent> events = List.copyOf(agg.getDomainEvents());
-            
+
             if (!events.isEmpty()) {
                 agg.clearDomainEvents();
-                
+
                 enrichEventsWithContext(events);
-                
+
                 if (TransactionSynchronizationManager.isSynchronizationActive()) {
                     log.info("Transaction synchronization is active, registering afterCommit callback for {} events", events.size());
                     TransactionSynchronizationManager.registerSynchronization(
-                        new TransactionSynchronization() {
-                            @Override
-                            public void afterCommit() {
-                                log.info("Transaction committed, publishing {} events", events.size());
-                                publishEvents(events);
+                            new TransactionSynchronization() {
+                                @Override
+                                public void afterCommit() {
+                                    log.info("Transaction committed, publishing {} events", events.size());
+                                    publishEvents(events);
+                                }
                             }
-                        }
                     );
                 } else {
                     log.info("No transaction synchronization active, publishing {} events immediately", events.size());
@@ -67,7 +67,7 @@ public class RepositoryEventAspect {
         }
         return result;
     }
-    
+
     private void enrichEventsWithContext(List<AbstractDomainEvent> events) {
         CommandContext ctx = CommandContextHolder.getContext();
         if (ctx != null) {
@@ -81,18 +81,14 @@ public class RepositoryEventAspect {
                 e.setUserName(ctx.getUserName());
                 String callerUidStr = ctx.getCallerUid();
                 if (callerUidStr != null && !callerUidStr.isEmpty()) {
-                    try {
-                        e.setCallerUid(Long.parseLong(callerUidStr));
-                    } catch (NumberFormatException ex) {
-                        log.error("Failed to parse callerUid: {}", callerUidStr, ex);
-                    }
+                    e.setCallerUid(callerUidStr);
                 }
             });
         }
     }
-    
+
     private void publishEvents(List<AbstractDomainEvent> events) {
-        log.info("Publishing {} domain events via {}, thread={}", 
+        log.info("Publishing {} domain events via {}, thread={}",
                 events.size(), eventBus.getClass().getName(), Thread.currentThread().getName());
         for (AbstractDomainEvent event : events) {
             try {

@@ -5,7 +5,7 @@ import lombok.Data;
 
 /**
  * Base class for commands, encapsulates common request parameters, the base parent class for all Commands, for unified extension and management.
- * 
+ *
  * @author kangzeng.ckz
  * @since 2024/10/24
  */
@@ -23,7 +23,7 @@ public abstract class BaseCommand<R> implements Command<R> {
      * the aliUid of call open api.
      */
     @Schema(hidden = true)
-    protected Long callerUid;
+    protected String callerUid;
     /**
      * Username
      */
