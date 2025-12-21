@@ -81,8 +81,18 @@ public class CqrsAroundHandler {
             requestId = ((BaseQuery) firstArg).getRequestId();
             username = ((BaseQuery) firstArg).getUserName();
         } else if (firstArg instanceof AbstractDomainEvent) {
-            requestId = ((AbstractDomainEvent) firstArg).getRequestId();
-            username = ((AbstractDomainEvent) firstArg).getUserName();
+            AbstractDomainEvent event = (AbstractDomainEvent) firstArg;
+            requestId = event.getRequestId();
+            username = event.getUserName();
+            
+            // Restore DomainEventContext from Event (for downstream Commands)
+            DomainEventContext.setRequestId(requestId);
+            DomainEventContext.setUserName(username);
+            DomainEventContext.setJti(event.getJti());
+            DomainEventContext.setAuthorities(event.getAuthorities());
+            if (event.getCallerUid() != null) {
+                DomainEventContext.setCallerUid(event.getCallerUid());
+            }
         }
         Object result;
         try {
@@ -91,7 +101,7 @@ public class CqrsAroundHandler {
             throw throwable;
         } finally {
             // Clean up context to prevent memory leaks
-            if (firstArg instanceof BaseCommand) {
+            if (firstArg instanceof BaseCommand || firstArg instanceof AbstractDomainEvent) {
                 DomainEventContext.clear();
             }
         }
@@ -112,6 +122,28 @@ public class CqrsAroundHandler {
     public Object handleEventBus(ProceedingJoinPoint joinPoint) throws Throwable {
         logger.info("[CqrsAroundHandler] handleEventBus invoked! method: {}", joinPoint.getSignature());
         logger.info("[CqrsAroundHandler] Current thread: {}, EventBus: {}", Thread.currentThread().getName(), eventBus.getClass().getName());
+        
+        // Auto-fill context into Command if context exists in ThreadLocal
+        Object[] args = joinPoint.getArgs();
+        if (args.length > 0 && args[0] instanceof BaseCommand) {
+            BaseCommand cmd = (BaseCommand) args[0];
+            if (cmd.getRequestId() == null) {
+                String requestId = DomainEventContext.getRequestId();
+                if (requestId != null) {
+                    cmd.setRequestId(requestId);
+                    cmd.setUserName(DomainEventContext.getUserName());
+                    cmd.setJti(DomainEventContext.getJti());
+                    cmd.setAuthorities(DomainEventContext.getAuthorities());
+                    String callerUid = DomainEventContext.getCallerUid();
+                    if (callerUid != null) {
+                        try {
+                            cmd.setCallerUid(callerUid);
+                        } catch (Exception ignored) {}
+                    }
+                }
+            }
+        }
+
         // 执行原始命令
         Object result;
         try {
@@ -120,7 +152,6 @@ public class CqrsAroundHandler {
             throw throwable;
         }
         // 获取命令对象
-        Object[] args = joinPoint.getArgs();
         if (args.length > 0 && args[0] instanceof BaseCommand) {
             // 如果命令执行后产生了领域事件，发布事件
             if (result instanceof DomainEvents) {
